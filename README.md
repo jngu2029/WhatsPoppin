@@ -29,6 +29,24 @@ The initial UI/UX was designed in Figma before development
 
 ### Screenshots
 
+Loading Screen
+
 ![Loading Screen](design/loading-screen.png)
+
+Home Screen
+
+Register Page
+
+Sign in Page
+
+Home Page
+
+Venue Page
+
+Event Page
+
+Reports Page
+
+Favorites Page
 
 
