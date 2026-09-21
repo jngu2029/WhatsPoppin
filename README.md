@@ -20,3 +20,11 @@ Django REST Framework
 
 Database:
 PostgreSQL
+
+## UI/UX Design
+
+The initial UI/UX was designed in Figma before development
+
+### Loading Screen
+![Loading Screen](design/loading-screen.png)
+
