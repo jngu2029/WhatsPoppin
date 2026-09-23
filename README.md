@@ -33,7 +33,9 @@ Loading Screen
 
 ![Loading Screen](design/loading-screen.png)
 
-Home Screen
+Welcome Page
+
+![Welcome Page](design/welcome-page.png)
 
 Register Page
 
@@ -41,11 +43,17 @@ Sign in Page
 
 Home Page
 
+![Home Page](design/home-page.png)
+
 Venue Page
+
+Comments Page
 
 Event Page
 
-Reports Page
+Reports pages
+
+Profile pages
 
 Favorites Page
 
