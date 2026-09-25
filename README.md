@@ -1,8 +1,10 @@
 # WhatsPoppin
 
-A real-time nightlife discovery platform for the DMV
+A mobile app about real-time nightlife discovery for College Park Maryland.
 
-## Features coming
+Users will be able to find the perfect place in College Park to spend their night!
+
+## Key features
 
 - Real-time crowd reporting
 - Venue discovery
@@ -10,7 +12,7 @@ A real-time nightlife discovery platform for the DMV
 - Historical crowd trends
 - Venue accounts
 
-## Planned Tech Stack
+## Tech Stack
 
 Frontend:
 React Native / Expo
