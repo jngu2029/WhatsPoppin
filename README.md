@@ -47,14 +47,12 @@ Home Page
 
 Venue Page
 
-Comments Page
-
 Event Page
+
+Favorites Page
 
 Reports pages
 
 Profile pages
-
-Favorites Page
 
 
