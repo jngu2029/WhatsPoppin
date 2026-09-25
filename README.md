@@ -46,13 +46,20 @@ Home Page
 ![Home Page](design/home-page.png)
 
 Venue Page
+![Venue Page](design/venue-page.png)
 
 Event Page
+![Event Page](design/event-page.png)
 
 Favorites Page
+![Favorites Page](design/favorites-page.png)
 
 Reports pages
+![Reports Page](design/reports-page.png)
+![Reports Page 2](design/reports-page-2.png)
+![Reports Page 3](design/reports-page-3.png)
 
-Profile pages
+Profile page
+![Profile Page](design/profile-page.png)
 
 
