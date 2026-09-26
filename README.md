@@ -39,9 +39,10 @@ Welcome Page
 
 ![Welcome Page](design/welcome-page.png)
 
-Register Page
+Authentication Pages
 
-Sign in Page
+![Register Page](design/register-page.png)
+![Sign In Page](design/sign-in-page.png)
 
 Home Page
 
