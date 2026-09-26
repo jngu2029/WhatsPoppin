@@ -43,6 +43,8 @@ Register Page
 
 Sign in Page
 
+![Sign in Page](design/sign-in-page.png)
+
 Home Page
 
 ![Home Page](design/home-page.png)
