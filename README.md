@@ -42,6 +42,7 @@ Welcome Page
 Authentication Pages
 
 ![Register Page](design/register-page.png)
+![Sign in Page](design/sign-in-page.png)
 
 Home Page
 
