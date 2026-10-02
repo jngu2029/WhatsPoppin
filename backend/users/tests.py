@@ -35,6 +35,8 @@ class UserModelTests(TestCase):
             username="sample_jordan",
             email="jordan.sample@example.com",
             password=raw_password,
+            phone="301-555-0101",
+            date_of_birth=date(2004, 3, 15),
         )
 
         self.assertNotEqual(user.password, raw_password)
@@ -49,6 +51,8 @@ class UserModelTests(TestCase):
                 username="sample_riley",
                 email="",
                 password="sample-password",
+                phone="301-555-0101",
+                date_of_birth=date(2004, 3, 15),
             )
 
     def test_email_must_be_unique(self):
@@ -56,6 +60,8 @@ class UserModelTests(TestCase):
             username="sample_alex",
             email="Alex@Example.com",
             password="sample-password",
+            phone="301-555-0101",
+            date_of_birth=date(2004, 3, 15),
         )
 
         with self.assertRaises(IntegrityError):
@@ -64,15 +70,61 @@ class UserModelTests(TestCase):
                     username="sample_alex_2",
                     email="alex@example.com",
                     password="sample-password",
+                    phone="301-555-0101",
+                    date_of_birth=date(2004, 3, 15),
                 )
 
     def test_date_of_birth_cannot_be_in_the_future(self):
         user = User(
             username="sample_future",
             email="future.sample@example.com",
+            phone="301-555-0101",
             date_of_birth=date(2999, 1, 1),
         )
         user.set_password("sample-password")
 
         with self.assertRaises(ValidationError):
             user.full_clean()
+
+    def test_date_of_birth_is_required(self):
+        user = User(
+            username="sample_no_dob",
+            email="no_dob.sample@example.com",
+            phone="301-555-0101",
+        )
+        user.set_password("sample-password")
+        with self.assertRaises(ValidationError):
+            user.full_clean()
+
+    def test_phone_is_required(self):
+        user = User(
+            username="sample_no_phone",
+            email="no_phone.sample@example.com",
+            date_of_birth=date(2004, 3, 15),
+        )
+        user.set_password("sample-password")
+        with self.assertRaises(ValidationError) as cm:
+            user.full_clean()
+        self.assertIn("phone", cm.exception.message_dict)
+
+    def test_phone_accepts_valid_format(self):
+        user = User(
+            username="sample_valid_phone",
+            email="valid_phone.sample@example.com",
+            phone="123-456-7890",
+            date_of_birth=date(2004, 3, 15),
+        )
+        user.set_password("sample-password")
+        user.full_clean()
+
+    def test_phone_rejects_invalid_format(self):
+        user = User(
+            username="sample_invalid_phone",
+            email="invalid_phone.sample@example.com",
+            phone="not-a-phone",
+            date_of_birth=date(2004, 3, 15),
+        )
+        user.set_password("sample-password")
+        with self.assertRaises(ValidationError) as cm:
+            user.full_clean()
+        self.assertIn("phone", cm.exception.message_dict)

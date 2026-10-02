@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 
 from django.db import IntegrityError, transaction
 from django.test import TestCase
@@ -14,11 +15,15 @@ class FavoriteModelTests(TestCase):
             username="sample_alex",
             email="alex.sample@example.com",
             password="sample-password",
+            phone="301-555-0101",
+            date_of_birth=date(2004, 3, 15),
         )
         self.jordan = User.objects.create_user(
             username="sample_jordan",
             email="jordan.sample@example.com",
             password="sample-password",
+            phone="301-555-0102",
+            date_of_birth=date(2004, 3, 15),
         )
         self.hall = Venue.objects.create(
             name="Sample Hall",

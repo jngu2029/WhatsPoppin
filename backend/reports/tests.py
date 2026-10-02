@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -15,6 +16,8 @@ class CrowdReportModelTests(TestCase):
             username="sample_alex",
             email="alex.sample@example.com",
             password="sample-password",
+            phone="301-555-0101",
+            date_of_birth=date(2004, 3, 15),
         )
         self.venue = Venue.objects.create(
             name="Sample Hall",

@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractUser, UserManager as DjangoUserMa
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from django.core.validators import RegexValidator
 
 
 class UserManager(DjangoUserManager):
@@ -24,8 +25,17 @@ class User(AbstractUser):
     """
 
     email = models.EmailField("email address", unique=True)
-    phone = models.CharField(max_length=20, required=True, blank=False)
-    date_of_birth = models.DateField(required=True, blank=False)
+    phone = models.CharField(
+        max_length=20,
+        blank=False,
+        validators=[
+            RegexValidator(
+                regex=r"^\d{3}-\d{3}-\d{4}$",
+                message="Enter a valid phone number (e.g. 123-456-7890)."
+            )
+        ],
+    )
+    date_of_birth = models.DateField(blank=False, null=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = UserManager()
