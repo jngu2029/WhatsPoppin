@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "WhatsPoppin",
+    "slug": "whatspoppin",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "scheme": "whatspoppin",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.whatspoppin.app"
+    },
+    "android": {
+      "package": "com.whatspoppin.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "WhatsPoppin · Find your kind of night",
+      "description": "Nearby bars, current crowd levels, and quick community reports."
+    },
+    "plugins": ["expo-font", "expo-status-bar", "expo-secure-store"]
+  }
+}

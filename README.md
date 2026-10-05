@@ -84,12 +84,103 @@ WhatsPoppin/
 │   ├── manage.py
 │   └── requirements.txt
 ├── design/           Figma screen exports
-├── frontend/         React Native app (not started)
+├── frontend/         Expo app for iOS, Android, and web
 ├── .env.example      Placeholder environment variables
 └── .venv/            Local Python virtual environment (not committed)
 ```
 
-The mobile app is not part of the backend foundation. Screen designs live in `design/`.
+The Expo app includes Nearby, map/list views, venue details, search, saved spots,
+quick crowd reporting, and a profile with report history. The original Figma
+exports remain in `design/`.
+
+## Run the app preview
+
+Node.js 22.13 or newer is required. From the repository root:
+
+```powershell
+cd frontend
+npm install
+npm run web
+```
+
+Open [the mobile app demo](http://localhost:8081). The browser demo keeps a mobile canvas (up to 480 px wide), while the native app adapts to the actual phone or tablet screen. For a compatible Expo Go app on
+a phone, run `npm start` and scan the QR code. A physical device must be on the
+same network as the computer. Windows cannot run the iOS simulator; use a
+physical iPhone or build on macOS.
+
+Without `EXPO_PUBLIC_API_URL`, the app runs in **sample preview mode**. Crowd
+reports, business details, locations, and photos are illustrative, not live
+business information. Saves and new sample reports persist on this device.
+They are never sent to the backend. Pull to refresh does not fabricate newer
+reports; existing reports become stale naturally.
+
+The interface uses four crowd levels: Quiet, Moderate, Busy, and Packed. The
+latest report determines the displayed level. Agreement is calculated from
+reports in the last 30 minutes. Older levels display **Needs update**. The
+original backend scale remains compatible: 0–1 → Quiet, 2 → Moderate,
+3–4 → Busy, 5 → Packed. Wait time is optional.
+
+Web maps use OpenStreetMap tiles and retain attribution. Native maps use
+`react-native-maps`. Configure a Google Maps API key in Expo's Android config
+for standalone Android builds. Venue photography and web tiles require a
+network connection; photo failures show a neutral fallback.
+
+## Connect the Django API
+
+Complete the backend setup below, including migrations and `seed_dev_data`.
+Then create `frontend/.env` from `frontend/.env.example` and set:
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://127.0.0.1:8000/api
+```
+
+Restart Expo after changing environment variables. For a physical phone, use
+the computer's LAN IP, run Django with `python manage.py runserver 0.0.0.0:8000`,
+and add that LAN IP to `ALLOWED_HOSTS` in the root `.env`. For an Android
+emulator, `10.0.2.2` reaches the host machine. Add the browser's exact origin to
+`CORS_ALLOWED_ORIGINS` when using a different host or port.
+
+Browse venues as a guest. Sign in from **You** using a seeded account to save
+venues and report crowds. The app does not silently substitute sample data if
+the API is unavailable. Native credentials are kept in Expo SecureStore;
+browser credentials last for the tab session. Sign-out revokes the API token.
+Account registration and password recovery are not implemented; accounts can
+be created through Django admin. Use HTTPS for a deployed API.
+
+Available API endpoints:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/venues/` | Public venues and latest reports |
+| POST | `/api/auth/sign-in/` | Username/password → token |
+| POST | `/api/auth/sign-out/` | Revoke token |
+| POST | `/api/reports/` | Authenticated crowd report |
+| GET | `/api/reports/mine/` | Your report history |
+| GET | `/api/favorites/` | Your saved venue IDs |
+| PUT / DELETE | `/api/favorites/<id>/` | Save / unsave a venue |
+
+## Verification
+
+```powershell
+cd frontend
+npm run typecheck
+npm test
+npm run build:web
+cd ../backend
+../.venv/Scripts/python.exe manage.py test --settings=config.test_settings
+```
+
+The test settings use an isolated SQLite test database, without changing
+PostgreSQL defaults or requiring local credentials. For optional local
+backend development without PostgreSQL, set `USE_SQLITE=1` in the root `.env`
+alongside `DJANGO_SECRET_KEY` and `DEBUG=True`, then migrate normally.
+
+The browser preview is visually checked at 320, 375, 414, and 768 px, plus
+desktop. Native device builds still need device QA and release signing before
+store submission. `npm audit` currently reports inherited Expo/Metro dependency
+advisories; its proposed forced fixes downgrade Expo to SDK 44 and are not
+compatible with this project. TypeScript 7 is used because the SDK-recommended TypeScript 6 compiler recurses on the native screen types; Expo may report that development-tool version difference. Review upstream patches before a production
+release.
 
 ## Backend setup
 
@@ -176,5 +267,6 @@ From the `backend` directory:
 ```powershell
 python manage.py test
 ```
+
 
 
