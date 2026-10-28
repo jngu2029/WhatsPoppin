@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Expo / web build artifacts
+frontend/node_modules/
+frontend/.expo/
+frontend/dist/
+frontend/dist-native/
+frontend/dist-all/
+frontend/audit-report.json

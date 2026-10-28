@@ -1,0 +1,21 @@
+/* Hallmark · macrostructure: mobile discovery list · tone: neutral · anchor hue: forest */
+:root {
+  --color-ink: #202925;
+  --color-muted: #66716c;
+  --color-accent: #24634b;
+  --color-paper: #ffffff;
+  --color-background: #f7f9f7;
+  --color-border: #e2e7e3;
+  --color-focus: #24634b;
+  --color-shadow: #20292520;
+  --font-body: Manrope_400Regular, system-ui, sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-control: 8px;
+  --dur-press: 120ms;
+  --ease-ui: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
