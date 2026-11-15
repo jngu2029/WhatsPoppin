@@ -270,3 +270,25 @@ python manage.py test
 
 
 
+
+
+### Account registration
+
+Activate the virtual environment, then run `python manage.py migrate` from
+`backend/`. Migration 0003 checks for case-insensitive username/email conflicts
+before adding uniqueness constraints. If it stops, have an administrator review
+those accounts and explicitly resolve the conflicts, then retry. It does not
+rename, merge, or delete accounts.
+
+With Django running and `frontend/.env` pointing to its `/api` base URL, open
+**You ? Create account**. Enter username, email, phone (`301-555-0101` format),
+date of birth (`MM/DD/YYYY`; you must be at least 21), and matching passwords (10+ characters, an ASCII
+uppercase letter, and a digit; Django also rejects common/similar passwords).
+Registration signs you in. Sample preview explains that the backend is needed.
+If a network failure leaves the outcome unknown, try signing in first.
+
+Run backend registration tests from `backend/` with
+`python manage.py test users.test_registration --noinput`. The concurrency test
+requires PostgreSQL and uses Django's separate test database (the role needs
+CREATEDB). Run frontend checks from `frontend/` with `npm test` and
+`npm run typecheck`.

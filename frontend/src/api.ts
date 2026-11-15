@@ -1,6 +1,9 @@
 import { Venue, Report, backendLevel } from "./data";
 export const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 export type Account = { username: string; first_name: string; token: string };
+export class ApiError extends Error {
+  constructor(message: string, public fields: Record<string, string[]> = {}, public status = 0) { super(message); }
+}
 export async function request(
   path: string,
   options: RequestInit = {},
@@ -20,10 +23,11 @@ export async function request(
     });
     const json = response.status === 204 ? null : await response.json();
     if (!response.ok)
-      throw new Error(
+      throw new ApiError(
         json?.detail ||
           json?.non_field_errors?.[0] ||
           "Could not save your changes. Try again.",
+        json, response.status,
       );
     return json;
   } finally {

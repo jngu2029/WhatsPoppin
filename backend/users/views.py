@@ -25,3 +25,30 @@ class SignOut(APIView):
     def post(self, request):
         Token.objects.filter(user=request.user).delete()
         return Response(status=204)
+
+
+class Register(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "register"
+
+    def post(self, request):
+        from django.db import IntegrityError, transaction
+        from .serializers import RegistrationSerializer
+        from .models import User
+        serializer = RegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+                token = Token.objects.create(user=user)
+        except IntegrityError:
+            errors = {}
+            for field in ("username", "email"):
+                if User.objects.filter(**{field + "__iexact": serializer.validated_data[field]}).exists():
+                    errors[field] = ["This " + field + " is unavailable. Try signing in."]
+            if not errors:
+                raise
+            return Response(errors, status=400)
+        return Response({"token": token.key, "username": user.username, "first_name": user.first_name}, status=201)

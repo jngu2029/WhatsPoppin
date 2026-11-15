@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, timedelta
+from django.utils import timezone
 from django.core.cache import cache
 from rest_framework.test import APITestCase
 from users.models import User
@@ -32,6 +33,35 @@ class MobileAPITests(APITestCase):
         self.assertEqual(mine["level"], 2)
         self.assertIsNone(mine["wait"])
         self.assertTrue(mine["mine"])
+
+    def test_report_cooldown_is_per_user_and_venue(self):
+        self.client.force_authenticate(self.user)
+        data = {"venue": self.venue.id, "crowd_level": 3, "wait_time": 5}
+        url = "/api/reports/"
+        self.assertEqual(self.client.post(url, data).status_code, 201)
+        blocked = self.client.post(url, data)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn("Retry-After", blocked)
+        self.assertEqual(CrowdReport.objects.count(), 1)
+
+        other_venue = Venue.objects.create(name="Other Bar", address="Second Street", city="College Park", state="MD", latitude="38.98", longitude="-76.93")
+        self.assertEqual(self.client.post(url, {**data, "venue": other_venue.id}).status_code, 201)
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(url, data).status_code, 201)
+
+        CrowdReport.objects.filter(user=self.user, venue=self.venue).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+        self.client.force_authenticate(self.user)
+        self.assertEqual(self.client.post(url, data).status_code, 201)
+
+    def test_staff_can_report_at_same_venue_twice(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        self.client.force_authenticate(self.user)
+        data = {"venue": self.venue.id, "crowd_level": 3, "wait_time": 5}
+        for _ in range(2):
+            self.assertEqual(self.client.post("/api/reports/", data).status_code, 201)
 
     def test_report_validation(self):
         self.login()

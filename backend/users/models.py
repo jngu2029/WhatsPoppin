@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser, UserManager as DjangoUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 from django.core.validators import RegexValidator
 
@@ -43,6 +44,8 @@ class User(AbstractUser):
     class Meta:
         ordering = ["username"]
         constraints = [
+            models.UniqueConstraint(Lower("username"), name="user_username_ci_unique"),
+            models.UniqueConstraint(Lower("email"), name="user_email_ci_unique"),
             models.CheckConstraint(
                 condition=~models.Q(email=""),
                 name="user_email_not_blank",

@@ -1,4 +1,10 @@
+from datetime import timedelta
+
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import generics
+from rest_framework.exceptions import Throttled
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -14,7 +20,24 @@ class ReportCreate(generics.CreateAPIView):
     throttle_scope = "reports"
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            serializer.save(user=user)
+            return
+
+        with transaction.atomic():
+            # Serialize submissions by this account so concurrent requests
+            # cannot both pass the cooldown check on PostgreSQL.
+            get_user_model().objects.select_for_update().get(pk=user.pk)
+            now = timezone.now()
+            latest = CrowdReport.objects.filter(
+                user=user, venue=serializer.validated_data["venue"],
+                created_at__gt=now - timedelta(minutes=5),
+            ).first()
+            if latest:
+                wait = (latest.created_at + timedelta(minutes=5) - now).total_seconds()
+                raise Throttled(wait=wait, detail="You can report at this venue once every 5 minutes.")
+            serializer.save(user=user)
 
 
 class MyReports(APIView):

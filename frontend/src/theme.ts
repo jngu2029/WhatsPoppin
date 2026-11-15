@@ -6,6 +6,7 @@ export const colors = {
   subtle: "#8A948E",
   accent: "#24634B",
   accentLight: "#EDF5EF",
+  savedFill: "#FACC15",
   white: "#FFFFFF",
   background: "#F7F9F7",
   border: "#E2E7E3",

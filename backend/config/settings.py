@@ -142,7 +142,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
-    "DEFAULT_THROTTLE_RATES": {"reports": "30/hour", "login": "20/hour"},
+    "DEFAULT_THROTTLE_RATES": {"reports": "30/hour", "login": "20/hour", "register": "10/hour"},
 }
 
 CORS_ALLOWED_ORIGINS = [

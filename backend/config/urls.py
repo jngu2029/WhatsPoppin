@@ -5,9 +5,10 @@ from django.urls import path
 from venues.views import VenueList
 from reports.views import ReportCreate, MyReports
 from favorites.views import FavoriteList, FavoriteDetail
-from users.views import SignIn, SignOut
+from users.views import SignIn, SignOut, Register
 
 urlpatterns = [
+    path("api/auth/register/", Register.as_view()),
     path("admin/", admin.site.urls),
     path("api/venues/", VenueList.as_view()),
     path("api/reports/", ReportCreate.as_view()),

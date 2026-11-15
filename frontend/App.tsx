@@ -1,3 +1,4 @@
+import Registration from "./src/Registration";
 import React, {
   createContext,
   useContext,
@@ -38,6 +39,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
   NavigationContainer,
+  useNavigationContainerRef,
   useNavigation,
   NavigatorScreenParams,
 } from "@react-navigation/native";
@@ -56,6 +58,8 @@ import {
   ChevronRight,
   Clock3,
   Compass,
+  Eye,
+  EyeOff,
   Info,
   List,
   LocateFixed,
@@ -104,6 +108,7 @@ type Store = {
   setReportVenue: (v: Venue | null) => void;
   setOrigin: (o: typeof collegePark) => void;
   setRadius: (r: number) => void;
+  acceptRegistration: (a: Account) => Promise<void>;
   signIn: (u: string, p: string) => Promise<void>;
   signOut: () => Promise<void>;
   toast: (text: string) => void;
@@ -116,7 +121,7 @@ type Routes = {
   Main: NavigatorScreenParams<{
     Nearby: undefined;
     Saved: undefined;
-    Profile: undefined;
+    Profile: { auth?: "signIn" | "register" } | undefined;
   }>;
   Venue: { id: number };
   Search: undefined;
@@ -159,7 +164,7 @@ function IconButton({
       <Icon
         size={22}
         color={active ? c.accent : c.ink}
-        fill={active ? c.accentLight : "none"}
+        fill={active ? (Icon === Bookmark ? c.savedFill : c.accentLight) : "none"}
         strokeWidth={1.7}
       />
     </Pressable>
@@ -760,12 +765,57 @@ function Empty({
     </View>
   );
 }
+function matchesVenue(venue: Venue, query: string) {
+  return `${venue.name} ${venue.kind} ${venue.city} ${venue.address}`
+    .toLowerCase()
+    .includes(query.trim().toLowerCase());
+}
+
+function VenueSearchBar({ query, setQuery, autoFocus = false, label = "Search venues" }: {
+  query: string;
+  setQuery: (query: string) => void;
+  autoFocus?: boolean;
+  label?: string;
+}) {
+  const input = useRef<TextInput>(null);
+  return (
+    <View style={s.searchBar}>
+      <Search size={20} color={c.muted} />
+      <TextInput
+        ref={input}
+        autoFocus={autoFocus}
+        accessibilityLabel={label}
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Bar, neighborhood, or street"
+        placeholderTextColor={c.muted}
+        style={s.searchInput}
+        returnKeyType="search"
+        autoCorrect={false}
+      />
+      {query ? (
+        <IconButton
+          icon={X}
+          label="Clear search"
+          onPress={() => {
+            setQuery("");
+            input.current?.focus();
+          }}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 function Saved(): React.JSX.Element {
   const store = useStore();
   const nav = useNavigation<any>();
+  const [query, setQuery] = useState("");
   const venues = store.venues.filter((v) => store.saved.includes(v.id));
+  const results = venues.filter((v) => matchesVenue(v, query));
+  const searching = Boolean(query.trim());
   return (
-    <ScrollView style={s.screen} contentContainerStyle={s.page}>
+    <ScrollView keyboardShouldPersistTaps="handled" style={s.screen} contentContainerStyle={s.page}>
       <View style={s.pageHeading}>
         <View style={{ flex: 1 }}>
           <Copy style={s.title}>Saved spots</Copy>
@@ -775,13 +825,18 @@ function Saved(): React.JSX.Element {
         </View>
         <Bookmark size={25} color={c.accent} strokeWidth={1.6} />
       </View>
+      <VenueSearchBar query={query} setQuery={setQuery} label="Search saved venues" />
       <View style={s.resultsHeader}>
         <Copy style={s.sectionTitle}>
-          {venues.length} saved {venues.length === 1 ? "spot" : "spots"}
+          {searching
+            ? `${results.length} ${results.length === 1 ? "match" : "matches"}`
+            : `${venues.length} saved ${venues.length === 1 ? "spot" : "spots"}`}
         </Copy>
       </View>
-      {venues.length ? (
-        venues.map((v) => <VenueRow key={v.id} venue={v} />)
+      {results.length ? (
+        results.map((v) => <VenueRow key={v.id} venue={v} />)
+      ) : searching && venues.length ? (
+        <Empty icon={Search} title="No matching saved spots" detail="Try another venue name or street." />
       ) : (
         <Empty
           icon={Bookmark}
@@ -811,13 +866,8 @@ function BackHeader({ title }: { title: string }): React.JSX.Element {
 function SearchScreen(): React.JSX.Element {
   const store = useStore();
   const [query, setQuery] = useState("");
-  const input = useRef<TextInput>(null);
   const results = store.venues
-    .filter((v) =>
-      `${v.name} ${v.kind} ${v.city} ${v.address}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-    )
+    .filter((v) => matchesVenue(v, query))
     .sort(
       (a, b) => distanceMiles(a, store.origin) - distanceMiles(b, store.origin),
     );
@@ -828,31 +878,7 @@ function SearchScreen(): React.JSX.Element {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={s.page}
       >
-        <View style={s.searchBar}>
-          <Search size={20} color={c.muted} />
-          <TextInput
-            ref={input}
-            autoFocus
-            accessibilityLabel="Search venues"
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Bar, neighborhood, or street"
-            placeholderTextColor={c.muted}
-            style={s.searchInput}
-            returnKeyType="search"
-            autoCorrect={false}
-          />
-          {query ? (
-            <IconButton
-              icon={X}
-              label="Clear search"
-              onPress={() => {
-                setQuery("");
-                input.current?.focus();
-              }}
-            />
-          ) : null}
-        </View>
+        <VenueSearchBar query={query} setQuery={setQuery} autoFocus />
         <View style={s.resultsHeader}>
           <Copy style={s.sectionTitle}>
             {query
@@ -1202,15 +1228,23 @@ function VenueDetail({ route }: any): React.JSX.Element {
     </View>
   );
 }
-function Profile(): React.JSX.Element {
+function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" } } }): React.JSX.Element {
   const store = useStore();
   const nav = useNavigation<any>();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [login, setLogin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [register, setRegister] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [about, setAbout] = useState(false);
+  const auth = route.params?.auth;
+  useEffect(() => {
+    if (!auth) return;
+    setRegister(auth === "register");
+    nav.setParams({ auth: undefined });
+  }, [auth, nav]);
+  if (register) return <Registration complete={async a => {await store.acceptRegistration(a); setRegister(false);}} back={() => setRegister(false)} />;
   const mine = store.reports
     .filter((r) => r.mine)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -1218,61 +1252,52 @@ function Profile(): React.JSX.Element {
     <ScrollView
       keyboardShouldPersistTaps="handled"
       style={s.screen}
-      contentContainerStyle={[s.page, { maxWidth: 760 }]}
+      contentContainerStyle={[s.page, { maxWidth: 760 }, !store.account && s.guestProfilePage]}
     >
-      <View style={s.pageHeading}>
+      {store.account && <View style={s.pageHeading}>
         <View style={{ flex: 1 }}>
           <Copy style={s.title}>Your profile</Copy>
           <Copy style={s.subtitle}>
             A few good spots. A little local knowledge.
           </Copy>
         </View>
-      </View>
-      <View style={s.profileIdentity}>
-        <View style={s.profileAvatar}>
-          <UserRound size={30} color={c.accent} strokeWidth={1.4} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Copy style={s.profileName}>
-            {store.account
-              ? store.account.first_name || store.account.username
-              : "Hey, neighbor"}
-          </Copy>
-          <Copy style={s.meta}>
-            {API_URL
-              ? store.account
-                ? "Community member"
-                : "Browsing as a guest"
-              : "Exploring the sample preview"}
-          </Copy>
-        </View>
-      </View>
-      <View style={s.profileCounts}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => nav.navigate("Saved")}
-          style={s.countBlock}
-        >
-          <Copy style={s.count}>{store.saved.length}</Copy>
-          <Copy style={s.meta}>Saved spots</Copy>
-        </Pressable>
-        <View style={s.countDivider} />
-        <View style={s.countBlock}>
-          <Copy style={s.count}>{mine.length}</Copy>
-          <Copy style={s.meta}>Your reports</Copy>
-        </View>
-      </View>
-      {API_URL && !store.account && (
-        <View style={s.detailSection}>
-          <Copy style={s.sectionTitle}>Keep your spots with you</Copy>
-          <Copy style={[s.meta, { marginVertical: 12 }]}>
-            Sign in to save venues and share crowd reports.
-          </Copy>
-          {!login ? (
-            <Button outline onPress={() => setLogin(true)}>
-              Sign in
-            </Button>
-          ) : (
+      </View>}
+      {store.account && (
+        <>
+          <View style={s.profileIdentity}>
+            <View style={s.profileAvatar}>
+              <UserRound size={30} color={c.accent} strokeWidth={1.4} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Copy style={s.profileName}>
+                {store.account.first_name || store.account.username}
+              </Copy>
+              <Copy style={s.meta}>
+                Community member
+              </Copy>
+            </View>
+          </View>
+          <View style={s.profileCounts}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => nav.navigate("Saved")}
+              style={s.countBlock}
+            >
+              <Copy style={s.count}>{store.saved.length}</Copy>
+              <Copy style={s.meta}>Saved spots</Copy>
+            </Pressable>
+            <View style={s.countDivider} />
+            <View style={s.countBlock}>
+              <Copy style={s.count}>{mine.length}</Copy>
+              <Copy style={s.meta}>Your reports</Copy>
+            </View>
+          </View>
+        </>
+      )}
+      {!store.account && (
+        <View style={s.guestAuth}>
+          <Copy accessibilityRole="header" style={s.title}>{API_URL ? "Sign in" : "Sample preview"}</Copy>
+          {API_URL && (
             <View style={{ gap: 12 }}>
               <Copy style={s.factValue}>Username</Copy>
               <TextInput
@@ -1288,10 +1313,20 @@ function Profile(): React.JSX.Element {
                 accessibilityLabel="Password"
                 value={password}
                 onChangeText={setPassword}
-                secureTextEntry
+                secureTextEntry={!showPassword}
                 style={s.field}
                 autoComplete="current-password"
               />
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setShowPassword((shown) => !shown)}
+                style={({ pressed }) => [s.passwordToggle, pressed && s.pressed]}
+              >
+                {showPassword ? <EyeOff size={18} color={c.accent} /> : <Eye size={18} color={c.accent} />}
+                <Copy style={s.passwordToggleText}>
+                  {showPassword ? "Hide password" : "Show password"}
+                </Copy>
+              </Pressable>
               {error ? (
                 <Copy accessibilityRole="alert" style={{ color: c.packed }}>
                   {error}
@@ -1306,7 +1341,7 @@ function Profile(): React.JSX.Element {
                   try {
                     await store.signIn(username, password);
                     setPassword("");
-                    setLogin(false);
+                    setShowPassword(false);
                   } catch (e) {
                     setError((e as Error).message);
                   } finally {
@@ -1318,64 +1353,68 @@ function Profile(): React.JSX.Element {
               </Button>
             </View>
           )}
+          <Button outline disabled={busy} onPress={() => setRegister(true)}>Create account</Button>
         </View>
       )}
-      <View style={s.detailSection}>
-        <Copy style={s.sectionTitle}>Your recent reports</Copy>
-        {mine.length ? (
-          mine.map((r) => (
-            <View key={r.id} style={s.recentReport}>
-              <View style={s.reportAvatar}>
-                <Check size={18} color={c.accent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Copy style={s.factValue}>
-                  {store.venues.find((v) => v.id === r.venueId)?.name ??
-                    "Venue"}
+      {store.account && (
+        <View style={s.detailSection}>
+          <Copy style={s.sectionTitle}>Your recent reports</Copy>
+          {mine.length ? (
+            mine.map((r) => (
+              <View key={r.id} style={s.recentReport}>
+                <View style={s.reportAvatar}>
+                  <Check size={18} color={c.accent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Copy style={s.factValue}>
+                    {store.venues.find((v) => v.id === r.venueId)?.name ??
+                      "Venue"}
+                  </Copy>
+                  <Copy style={s.small}>
+                    {ageLabel(
+                      Math.floor((Date.now() - Date.parse(r.createdAt)) / 60000),
+                    )}
+                  </Copy>
+                </View>
+                <Copy
+                  style={{ color: levels[r.level].color, fontFamily: f.bold }}
+                >
+                  {levels[r.level].name}
                 </Copy>
-                <Copy style={s.small}>
-                  {ageLabel(
-                    Math.floor((Date.now() - Date.parse(r.createdAt)) / 60000),
-                  )}
-                </Copy>
               </View>
-              <Copy
-                style={{ color: levels[r.level].color, fontFamily: f.bold }}
-              >
-                {levels[r.level].name}
+            ))
+          ) : (
+            <View style={{ paddingVertical: 24 }}>
+              <Copy style={s.meta}>Nothing to report yet.</Copy>
+              <Copy style={[s.small, { marginTop: 4 }]}>
+                Your updates will appear here after you share one.
               </Copy>
             </View>
-          ))
-        ) : (
-          <View style={{ paddingVertical: 24 }}>
-            <Copy style={s.meta}>Nothing to report yet.</Copy>
-            <Copy style={[s.small, { marginTop: 4 }]}>
-              Your updates will appear here after you share one.
-            </Copy>
-          </View>
-        )}
-      </View>
+          )}
+        </View>
+      )}
+      <View style={!store.account && s.guestFooter}>
       <Pressable
         accessibilityRole="button"
         onPress={() => store.setLocationSheet(true)}
-        style={s.settingsRow}
+        style={store.account ? s.settingsRow : s.guestUtility}
       >
-        <MapPin size={20} color={c.muted} />
-        <Copy style={s.factValue}>Search area</Copy>
+        <MapPin size={store.account ? 20 : 15} color={c.muted} />
+        <Copy style={store.account ? s.factValue : s.guestUtilityText}>Search area</Copy>
         <View style={{ flex: 1 }} />
         <Copy style={s.small}>{store.radius} mi</Copy>
-        <ChevronRight size={18} color={c.muted} />
+        <ChevronRight size={store.account ? 18 : 14} color={c.muted} />
       </Pressable>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: about }}
         onPress={() => setAbout(!about)}
-        style={s.settingsRow}
+        style={store.account ? s.settingsRow : s.guestUtility}
       >
-        <Info size={20} color={c.muted} />
-        <Copy style={s.factValue}>How crowd reports work</Copy>
+        <Info size={store.account ? 20 : 15} color={c.muted} />
+        <Copy style={store.account ? s.factValue : s.guestUtilityText}>How crowd reports work</Copy>
         <View style={{ flex: 1 }} />
-        <ChevronDown size={18} color={c.muted} />
+        <ChevronDown size={store.account ? 18 : 14} color={c.muted} />
       </Pressable>
       {about && (
         <View style={s.about}>
@@ -1387,6 +1426,7 @@ function Profile(): React.JSX.Element {
           </Copy>
         </View>
       )}
+      </View>
       {store.account && (
         <Button
           outline
@@ -1400,14 +1440,13 @@ function Profile(): React.JSX.Element {
         <View style={[s.sampleNote, { marginTop: 28 }]}>
           <Info size={18} color={c.muted} />
           <Copy style={[s.small, { flex: 1 }]}>
-            This is a sample preview. Saved spots and your reports stay on this
-            device. Connect the Django API to use an account and shared reports.
+            Sample preview. Account features require a connection to WhatsPoppin.
           </Copy>
         </View>
       )}
-      <Copy style={[s.tiny, { textAlign: "center", marginTop: 32 }]}>
+      {store.account && <Copy style={[s.tiny, { textAlign: "center", marginTop: 32 }]}>
         WhatsPoppin · College Park
-      </Copy>
+      </Copy>}
     </ScrollView>
   );
 }
@@ -1733,6 +1772,12 @@ function AppContent(): React.JSX.Element {
   const [radius, setRadius] = useState(2);
   const [reportVenue, setReportVenue] = useState<Venue | null>(null);
   const [picker, setPicker] = useState(false);
+  const [authPrompt, setAuthPrompt] = useState<"save" | "report" | null>(null);
+  const navigation = useNavigationContainerRef<Routes>();
+  const openAuth = (auth: "signIn" | "register") => {
+    setAuthPrompt(null);
+    navigation.navigate("Main", { screen: "Profile", params: { auth } });
+  };
   const [locationSheet, setLocationSheet] = useState(false);
   const [notice, setNotice] = useState("");
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1818,11 +1863,16 @@ function AppContent(): React.JSX.Element {
       ),
     );
   }, [reports, saved, ready]);
+  const saveCooldowns = useRef(new Map<number, number>());
   const toggleSave = async (id: number) => {
     if (API_URL && !account) {
-      toast("Sign in from You to save spots.");
+      setAuthPrompt("save");
       return;
     }
+    const now = Date.now();
+    const cooldowns = saveCooldowns.current;
+    if ((cooldowns.get(id) ?? 0) > now) return;
+    cooldowns.set(id, Infinity);
     const wasSaved = saved.includes(id);
     try {
       if (API_URL)
@@ -1837,12 +1887,17 @@ function AppContent(): React.JSX.Element {
       toast(wasSaved ? "Removed from saved spots" : "Added to saved spots");
     } catch (e) {
       toast((e as Error).message);
+    } finally {
+      cooldowns.set(id, now + 500);
     }
   };
   const submitReport = async (level: number, wait: number | null) => {
     if (!reportVenue) return;
-    if (API_URL && !account)
-      throw new Error("Sign in from You to share a crowd report.");
+    if (API_URL && !account) {
+      setReportVenue(null);
+      setAuthPrompt("report");
+      return;
+    }
     let report: Report = {
       id: `local-${Date.now()}`,
       venueId: reportVenue.id,
@@ -1906,7 +1961,14 @@ function AppContent(): React.JSX.Element {
       toast((e as Error).message);
     }
   };
+  const acceptRegistration = async (session: Account) => {
+    await saveSession(session);
+    setAccount(session); setSaved([]);
+    setReports(previous => previous.map(r => ({...r, mine:false})));
+    toast("Account created");
+  };
   const store: Store = {
+    acceptRegistration,
     venues,
     reports,
     saved,
@@ -1928,7 +1990,11 @@ function AppContent(): React.JSX.Element {
     toast,
     setPicker,
     setLocationSheet,
-    openReport: (v) => (v ? setReportVenue(v) : setPicker(true)),
+    openReport: (v) => {
+      if (API_URL && !account) setAuthPrompt("report");
+      else if (v) setReportVenue(v);
+      else setPicker(true);
+    },
   };
   return (
     <Context.Provider value={store}>
@@ -1936,14 +2002,15 @@ function AppContent(): React.JSX.Element {
       <Brand />
       <View
         style={{ flex: 1 }}
-        aria-hidden={!!reportVenue || picker || locationSheet}
+        aria-hidden={!!reportVenue || picker || locationSheet || !!authPrompt}
         importantForAccessibility={
-          reportVenue || picker || locationSheet
+          reportVenue || picker || locationSheet || authPrompt
             ? "no-hide-descendants"
             : "auto"
         }
       >
         <NavigationContainer<Routes>
+          ref={navigation}
           linking={{
             prefixes: ["whatspoppin://"],
             config: {
@@ -1972,6 +2039,17 @@ function AppContent(): React.JSX.Element {
         </NavigationContainer>
       </View>
       <ReportSheet />
+      <Sheet visible={!!authPrompt} onClose={() => setAuthPrompt(null)} title={authPrompt === "save" ? "Save this spot" : "Share a crowd report"}>
+        <View style={{ padding: 24, gap: 12 }}>
+          <Copy style={s.meta}>
+            {authPrompt === "save"
+              ? "Sign in or create an account to save venues."
+              : "Sign in or create an account to share crowd reports."}
+          </Copy>
+          <Button onPress={() => openAuth("signIn")}>Sign in</Button>
+          <Button outline onPress={() => openAuth("register")}>Create account</Button>
+        </View>
+      </Sheet>
       <LocationSheet
         visible={locationSheet}
         onClose={() => setLocationSheet(false)}
@@ -2150,6 +2228,7 @@ const s = StyleSheet.create({
     fontFamily: f.regular,
     fontSize: 15,
     color: c.ink,
+    paddingHorizontal: 12,
     paddingVertical: 14,
   },
   controls: {
@@ -2522,6 +2601,36 @@ const s = StyleSheet.create({
   },
   buttonText: { color: c.white, fontFamily: f.bold, fontSize: 14 },
   disabled: { opacity: 0.45 },
+  guestProfilePage: { flexGrow: 1 },
+  guestAuth: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    paddingTop: 32,
+    gap: 16,
+  },
+  guestFooter: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    marginTop: "auto",
+    paddingTop: 32,
+  },
+  guestUtility: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  guestUtilityText: { fontSize: 13, fontFamily: f.regular, color: c.muted },
+  passwordToggle: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    minHeight: 44,
+    alignSelf: "flex-start",
+  },
+  passwordToggleText: { fontFamily: f.semibold, fontSize: 14, color: c.accent },
   profileIdentity: {
     flexDirection: "row",
     alignItems: "center",
