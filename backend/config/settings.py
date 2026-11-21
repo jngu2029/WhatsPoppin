@@ -142,8 +142,38 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
-    "DEFAULT_THROTTLE_RATES": {"reports": "30/hour", "login": "20/hour", "register": "10/hour"},
+    "DEFAULT_THROTTLE_RATES": {
+        "reports": "30/hour",
+        "login": "20/hour",
+        "register": "10/hour",
+        # Per IP. The per-number and per-email code limits live in users/verification.py.
+        "signup": "30/hour",
+        "signup_verify": "60/hour",
+    },
 }
+
+# Sign-up verification codes.
+# Text messages: Twilio when these are set. Otherwise printed to the console
+# in development (DEBUG) and unavailable in production.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
+SMS_BACKEND = os.environ.get(
+    "SMS_BACKEND",
+    "twilio" if TWILIO_ACCOUNT_SID else ("console" if DEBUG else "disabled"),
+)
+# Email: SMTP when EMAIL_HOST is set, otherwise printed to the console.
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST
+    else "django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "WhatsPoppin <no-reply@whatspoppin.local>")
 
 CORS_ALLOWED_ORIGINS = [
     origin.strip() for origin in os.environ.get(

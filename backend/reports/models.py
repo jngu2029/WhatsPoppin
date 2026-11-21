@@ -49,6 +49,14 @@ class CrowdReport(models.Model):
     crowd_level = models.PositiveSmallIntegerField(choices=CrowdLevel.choices)
     wait_time = models.PositiveSmallIntegerField(choices=WaitTime.choices)
     comment = models.TextField(blank=True)
+    verified_nearby = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when the reporter's phone was within a short distance of the "
+            "venue at submit time. Set by the server; the position itself is "
+            "never stored."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -6,8 +6,15 @@ from venues.views import VenueList
 from reports.views import ReportCreate, MyReports
 from favorites.views import FavoriteList, FavoriteDetail
 from users.views import SignIn, SignOut, Register
+from users.signup_views import SignupResend, SignupStart, SignupVerify
 
-urlpatterns = [
+signup_steps = [
+    path(f"api/auth/signup/{channel}/{suffix}", view.as_view(channel=channel))
+    for channel in ("phone", "email")
+    for suffix, view in (("", SignupStart), ("resend/", SignupResend), ("verify/", SignupVerify))
+]
+
+urlpatterns = signup_steps + [
     path("api/auth/register/", Register.as_view()),
     path("admin/", admin.site.urls),
     path("api/venues/", VenueList.as_view()),

@@ -1,11 +1,12 @@
 import React, { useRef } from "react";
 import { StyleSheet, View, Text, Pressable } from "react-native";
 import MapView, { Marker } from "react-native-maps";
-import { Venue, Report, collegePark, crowdSummary } from "./data";
+import { Venue, Report, ServerCrowd, collegePark, crowdSummary, crowdTrendLabel } from "./data";
 import { colors, levels, font } from "./theme";
 export type MapProps = {
   venues: Venue[];
   reports: Report[];
+  crowd?: Record<number, ServerCrowd>;
   onSelect: (id: number) => void;
   selected?: number;
   origin?: typeof collegePark;
@@ -13,6 +14,7 @@ export type MapProps = {
 export default function MapPanel({
   venues,
   reports,
+  crowd,
   onSelect,
   origin = collegePark,
 }: MapProps) {
@@ -35,8 +37,9 @@ export default function MapPanel({
         pinColor={colors.accent}
       />
       {venues.map((v) => {
-        const summary = crowdSummary(v.id, reports);
-        const level = levels[summary.latest?.level ?? 0];
+        const summary = crowdSummary(v.id, reports, Date.now(), crowd?.[v.id]);
+        const level = levels[summary.level ?? 0];
+        const trendLabel = crowdTrendLabel(v.id, reports) ?? level.name;
         return (
           <Marker
             key={v.id}
@@ -59,7 +62,7 @@ export default function MapPanel({
                   fontFamily: font.bold,
                 }}
               >
-                {summary.stale ? "Needs update" : level.name}
+                {summary.stale ? "Needs update" : trendLabel}
               </Text>
             </View>
           </Marker>

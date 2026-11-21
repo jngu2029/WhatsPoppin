@@ -1,3 +1,5 @@
+import { levels } from "./theme";
+
 export type Report = {
   id: string;
   venueId: number;
@@ -5,6 +7,15 @@ export type Report = {
   createdAt: string;
   wait: number | null;
   mine?: boolean;
+  // True when the server confirmed the reporter was at the venue. Unset in preview data.
+  verified?: boolean;
+};
+// Crowd consensus the backend computes for a venue (backend/reports/consensus.py).
+export type ServerCrowd = {
+  level: number | null;
+  report_count: number;
+  confidence: "low" | "medium" | "high" | null;
+  updated_at: string | null;
 };
 export type Venue = {
   id: number;
@@ -128,10 +139,36 @@ export function distanceMiles(
       Math.sin(((venue.longitude - origin.longitude) * r) / 2) ** 2;
   return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+// Offline-preview copy of the backend's consensus. Keep these in sync with
+// backend/reports/consensus.py. The backend also counts each user once, which
+// the app cannot do because reports carry no user id.
+const HALF_LIFE_MINUTES = 10;
+const UNVERIFIED_WEIGHT = 0.3;
+export function localConsensus(recent: Report[], now: number): number | null {
+  if (!recent.length) return null;
+  const weighted = recent
+    .map((r) => ({
+      level: r.level,
+      weight:
+        0.5 ** (Math.max(0, now - Date.parse(r.createdAt)) / 60000 / HALF_LIFE_MINUTES) *
+        (r.verified === false ? UNVERIFIED_WEIGHT : 1),
+    }))
+    .sort((a, b) => a.level - b.level);
+  const half = weighted.reduce((sum, r) => sum + r.weight, 0) / 2;
+  let running = 0;
+  for (let i = 0; i < weighted.length; i++) {
+    running += weighted[i].weight;
+    if (running > half + 1e-9) return weighted[i].level;
+    if (Math.abs(running - half) <= 1e-9 && i + 1 < weighted.length)
+      return Math.floor((weighted[i].level + weighted[i + 1].level) / 2 + 0.5);
+  }
+  return weighted[weighted.length - 1].level;
+}
 export function crowdSummary(
   venueId: number,
   reports: Report[],
   now = Date.now(),
+  crowd?: ServerCrowd,
 ) {
   const all = reports
     .filter((r) => r.venueId === venueId)
@@ -141,14 +178,30 @@ export function crowdSummary(
     ? Math.max(0, Math.floor((now - Date.parse(latest.createdAt)) / 60000))
     : null;
   const recent = all.filter((r) => now - Date.parse(r.createdAt) <= 30 * 60000);
+  // The level shown to people is the consensus of recent reports, not the latest one.
+  const level = crowd
+    ? crowd.level === null
+      ? null
+      : backendLevel(crowd.level)
+    : localConsensus(recent, now);
   return {
     latest,
+    level,
     age,
-    stale: age === null || age > 30,
+    stale: age === null || age > 30 || level === null,
     recent,
-    agreeing: recent.filter((r) => r.level === latest?.level).length,
+    agreeing: recent.filter((r) => r.level === level).length,
     total: recent.length,
   };
+}
+// Sign-in accepts a username or an email. Anything with "@" is treated as an
+// email and must look like one before it is sent. The server checks it fully.
+export function signInIdentifierError(value: string): string | null {
+  const login = value.trim();
+  if (!login) return "Enter your username or email.";
+  if (login.includes("@") && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(login))
+    return "Enter a valid email address.";
+  return null;
 }
 export function ageLabel(age: number | null) {
   return age === null
@@ -160,4 +213,32 @@ export function ageLabel(age: number | null) {
         : age < 1440
           ? `${Math.floor(age / 60)} hr ago`
           : `${Math.floor(age / 1440)} days ago`;
+}
+
+export function crowdTrendBuckets(reports: Report[], now = Date.now()) {
+  return [60, 45, 30, 15, 0].map((minutes) => {
+    const end = now - Math.max(0, minutes - 7.5) * 60000;
+    const start = now - Math.min(60, minutes + 7.5) * 60000;
+    const matches = reports.filter(
+      (r) => Date.parse(r.createdAt) >= start && Date.parse(r.createdAt) <= end,
+    );
+    return matches.length
+      ? matches.reduce((sum, r) => sum + r.level, 0) / matches.length
+      : null;
+  });
+}
+
+export function crowdTrendRange(venueId: number, reports: Report[], now = Date.now()) {
+  const values = crowdTrendBuckets(reports.filter((report) => report.venueId === venueId), now)
+    .filter((value): value is number => value !== null);
+  if (!values.length) return null;
+
+  const low = Math.round(Math.min(...values));
+  const high = Math.round(Math.max(...values));
+  const label = low === high ? levels[low].name : levels[low].name + "–" + levels[high].name;
+  return { low, high, label };
+}
+
+export function crowdTrendLabel(venueId: number, reports: Report[], now = Date.now()) {
+  return crowdTrendRange(venueId, reports, now)?.label ?? null;
 }

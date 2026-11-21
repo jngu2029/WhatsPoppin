@@ -1,6 +1,7 @@
 import Registration from "./src/Registration";
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -39,6 +40,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import {
   NavigationContainer,
+  useFocusEffect,
   useNavigationContainerRef,
   useNavigation,
   NavigatorScreenParams,
@@ -72,27 +74,38 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import Svg, { Line, Circle } from "react-native-svg";
+import Svg, { Line, Circle, Text as SvgText } from "react-native-svg";
 import { colors as c, font as f, levels } from "./src/theme";
 import {
   Venue,
   Report,
+  ServerCrowd,
   demoVenues,
   seedReports,
   collegePark,
   crowdSummary,
+  crowdTrendBuckets,
+  crowdTrendLabel,
+  crowdTrendRange,
   distanceMiles,
   ageLabel,
+  signInIdentifierError,
 } from "./src/data";
-import { API_URL, Account, loadVenues, request } from "./src/api";
+import { API_URL, Account, ApiError, loadVenues, request } from "./src/api";
 import MapPanel from "./src/MapPanel";
 import { readSession, saveSession, clearSession } from "./src/session";
 import { useReducedMotion } from "./src/useReducedMotion";
+import {
+  LocationAccess,
+  openLocationSettings,
+  useLocationAccess,
+} from "./src/locationAccess";
 import { useAppDimensions, MOBILE_PREVIEW_WIDTH } from "./src/useAppDimensions";
 
 type Store = {
   venues: Venue[];
   reports: Report[];
+  crowd: Record<number, ServerCrowd>;
   saved: number[];
   ready: boolean;
   error: string;
@@ -104,11 +117,11 @@ type Store = {
   toggleSave: (id: number) => Promise<void>;
   refresh: () => Promise<void>;
   openReport: (v?: Venue) => void;
-  submitReport: (level: number, wait: number | null) => Promise<void>;
+  // Resolves to whether the server confirmed the reporter was at the venue (null when it can't tell).
+  submitReport: (level: number, wait: number | null) => Promise<boolean | null>;
   setReportVenue: (v: Venue | null) => void;
   setOrigin: (o: typeof collegePark) => void;
   setRadius: (r: number) => void;
-  acceptRegistration: (a: Account) => Promise<void>;
   signIn: (u: string, p: string) => Promise<void>;
   signOut: () => Promise<void>;
   toast: (text: string) => void;
@@ -225,42 +238,49 @@ function Crowd({
   venueId: number;
   large?: boolean;
 }): React.JSX.Element {
-  const { reports } = useStore();
-  const summary = crowdSummary(venueId, reports);
-  const level = levels[summary.latest?.level ?? 0];
+  const { reports, crowd } = useStore();
+  const now = Date.now();
+  const summary = crowdSummary(venueId, reports, now, crowd[venueId]);
+  const trend = summary.stale ? null : crowdTrendRange(venueId, reports, now);
+  const low = trend?.low ?? summary.level;
+  const high = trend?.high ?? summary.level;
+  const filledSegments =
+    summary.stale || low === null || high === null ? 0 : 1 + (low + high) / 2;
+  const darkness = Math.max(0, (filledSegments - 1) / (levels.length - 1));
+  const meterColor = `hsl(140, 70%, ${52 - 32 * darkness}%)`;
+  const color = summary.stale || high === null ? c.muted : levels[high].color;
+  const label = summary.stale ? "Needs update" : trend?.label ?? levels[summary.level ?? 0].name;
   return (
     <View style={[s.crowd, large && { alignItems: "flex-start" }]}>
       <Copy
         style={[
           s.crowdName,
-          { color: summary.stale ? c.muted : level.color },
+          { color },
           large && { fontSize: 30, lineHeight: 40 },
         ]}
       >
-        {summary.stale ? "Needs update" : level.name}
+        {label}
       </Copy>
       <View
         accessibilityLabel={
           summary.stale
             ? "No recent crowd report"
-            : `${level.name}, ${summary.latest!.level + 1} of 4 crowd levels`
+            : `Crowd level: ${label}`
         }
         style={[s.meter, large && { width: 132, height: 7 }]}
       >
-        {levels.map((_, i) => (
-          <View
-            key={i}
-            style={[
-              s.meterPart,
-              {
-                backgroundColor:
-                  !summary.stale && i <= summary.latest!.level
-                    ? level.color
-                    : c.border,
-              },
-            ]}
-          />
-        ))}
+        {levels.map((level, i) => {
+          const fill = Math.max(0, Math.min(1, filledSegments - i));
+          return (
+            <View key={level.name} style={s.meterPart}>
+              {fill > 0 && (
+                <View
+                  style={{ width: `${fill * 100}%`, height: "100%", backgroundColor: meterColor }}
+                />
+              )}
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -301,13 +321,13 @@ function VenueRow({
   const store = useStore();
   const nav = useNavigation<any>();
   const { width } = useAppDimensions();
-  const summary = crowdSummary(venue.id, store.reports);
+  const summary = crowdSummary(venue.id, store.reports, Date.now(), store.crowd[venue.id]);
   const distance = distanceMiles(venue, store.origin);
   return (
     <View style={[s.venueRow, compact && { paddingVertical: 12 }]}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`View ${venue.name}, ${summary.stale ? "needs update" : levels[summary.latest!.level].name}`}
+        accessibilityLabel={`View ${venue.name}, ${summary.stale ? "needs update" : crowdTrendLabel(venue.id, store.reports) ?? levels[summary.level!].name}`}
         onPress={() => nav.navigate("Venue", { id: venue.id })}
         style={({ pressed }) => [s.rowMain, pressed && { opacity: 0.7 }]}
       >
@@ -463,18 +483,18 @@ function Nearby(): React.JSX.Element {
     .filter(
       (v) =>
         filter === null ||
-        (!crowdSummary(v.id, store.reports).stale &&
-          crowdSummary(v.id, store.reports).latest?.level === filter),
+        (!crowdSummary(v.id, store.reports, Date.now(), store.crowd[v.id]).stale &&
+          crowdSummary(v.id, store.reports, Date.now(), store.crowd[v.id]).level === filter),
     )
     .sort((a, b) =>
       sort === "distance"
         ? distanceMiles(a, store.origin) - distanceMiles(b, store.origin)
-        : (crowdSummary(a.id, store.reports).stale
+        : (crowdSummary(a.id, store.reports, Date.now(), store.crowd[a.id]).stale
             ? 5
-            : crowdSummary(a.id, store.reports).latest!.level) -
-          (crowdSummary(b.id, store.reports).stale
+            : crowdSummary(a.id, store.reports, Date.now(), store.crowd[a.id]).level!) -
+          (crowdSummary(b.id, store.reports, Date.now(), store.crowd[b.id]).stale
             ? 5
-            : crowdSummary(b.id, store.reports).latest!.level),
+            : crowdSummary(b.id, store.reports, Date.now(), store.crowd[b.id]).level!),
     );
   return (
     <ScrollView
@@ -703,6 +723,7 @@ function Nearby(): React.JSX.Element {
                 <MapPanel
                   venues={venues}
                   reports={store.reports}
+                  crowd={store.crowd}
                   origin={store.origin}
                   onSelect={(id) => nav.navigate("Venue", { id })}
                 />
@@ -899,78 +920,87 @@ function SearchScreen(): React.JSX.Element {
     </View>
   );
 }
+// Everything is drawn inside one SVG sized to the real width, so labels sit exactly
+// on their gridlines and data points and nothing can overlap or stretch.
+const TREND_LABEL_COLUMN = 52;
+const TREND_PLOT_HEIGHT = 125;
+const TREND_HEIGHT = TREND_PLOT_HEIGHT + 17;
 function Trend({ reports }: { reports: Report[] }): React.JSX.Element {
-  const now = Date.now();
-  const buckets = [60, 45, 30, 15, 0].map((minutes) => {
-    const end = now - Math.max(0, minutes - 7.5) * 60000;
-    const start = now - Math.min(60, minutes + 7.5) * 60000;
-    const matches = reports.filter(
-      (r) => Date.parse(r.createdAt) >= start && Date.parse(r.createdAt) <= end,
-    );
-    return matches.length
-      ? matches.reduce((sum, r) => sum + r.level, 0) / matches.length
-      : null;
-  });
+  const [width, setWidth] = useState(344);
+  const buckets = crowdTrendBuckets(reports);
+  const plotLeft = TREND_LABEL_COLUMN;
+  const plotRight = width - 8;
+  const spacing = (plotRight - plotLeft - 32) / 4;
+  const bucketX = (i: number) => plotLeft + 16 + i * spacing;
   const points = buckets.flatMap((value, i) =>
-    value === null ? [] : [{ x: 24 + i * 74, y: 105 - value * 27, bucket: i }],
+    value === null ? [] : [{ x: bucketX(i), y: 105 - value * 27, bucket: i }],
   );
+  const label = { fontFamily: f.regular, fontSize: 11, fill: c.muted };
   return (
-    <View style={s.trend}>
-      <View style={s.trendLevels}>
-        <Copy style={s.tiny}>Packed</Copy>
-        <Copy style={s.tiny}>Quiet</Copy>
-      </View>
-      <View style={{ flex: 1 }}>
-        <Svg
-          height={125}
-          width="100%"
-          viewBox="0 0 344 125"
-          preserveAspectRatio="none"
-        >
-          {[24, 51, 78, 105].map((y) => (
-            <Line
-              key={y}
-              x1={8}
-              y1={y}
-              x2={336}
-              y2={y}
-              stroke={c.border}
-              strokeDasharray="4 4"
-            />
-          ))}
-          {points
-            .slice(1)
-            .map((p, i) =>
-              p.bucket === points[i].bucket + 1 ? (
-                <Line
-                  key={`segment-${i}`}
-                  x1={points[i].x}
-                  y1={points[i].y}
-                  x2={p.x}
-                  y2={p.y}
-                  stroke={c.accent}
-                  strokeWidth={2.5}
-                />
-              ) : null,
-            )}
-          {points.map((p, i) => (
-            <Circle
-              key={i}
-              cx={p.x}
-              cy={p.y}
-              r={4}
-              fill={c.accent}
-              stroke={c.white}
-              strokeWidth={2}
-            />
-          ))}
-        </Svg>
-        <View style={s.trendTimes}>
-          <Copy style={s.tiny}>1 hr ago</Copy>
-          <Copy style={s.tiny}>30 min ago</Copy>
-          <Copy style={s.tiny}>Now</Copy>
-        </View>
-      </View>
+    <View
+      style={s.trend}
+      onLayout={(e) => setWidth(Math.max(240, e.nativeEvent.layout.width))}
+    >
+      <Svg height={TREND_HEIGHT} width={width} viewBox={`0 0 ${width} ${TREND_HEIGHT}`}>
+        {[24, 51, 78, 105].map((y) => (
+          <Line
+            key={y}
+            x1={plotLeft}
+            y1={y}
+            x2={plotRight}
+            y2={y}
+            stroke={c.border}
+            strokeDasharray="4 4"
+          />
+        ))}
+        <SvgText x={0} y={24 + 4} {...label}>
+          Packed
+        </SvgText>
+        <SvgText x={0} y={105 + 4} {...label}>
+          Quiet
+        </SvgText>
+        {points
+          .slice(1)
+          .map((p, i) =>
+            p.bucket === points[i].bucket + 1 ? (
+              <Line
+                key={`segment-${i}`}
+                x1={points[i].x}
+                y1={points[i].y}
+                x2={p.x}
+                y2={p.y}
+                stroke={c.accent}
+                strokeWidth={2.5}
+              />
+            ) : null,
+          )}
+        {points.map((p, i) => (
+          <Circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r={4}
+            fill={c.accent}
+            stroke={c.white}
+            strokeWidth={2}
+          />
+        ))}
+        {[
+          { text: "1 hr ago", i: 0 },
+          { text: "30 min ago", i: 2 },
+          { text: "Now", i: 4 },
+        ].map(({ text, i }) => (
+          <SvgText
+            key={text}
+            x={bucketX(i)}
+            y={105 + 30}
+            textAnchor="middle"
+            {...label}
+          >
+            {text}
+          </SvgText>
+        ))}
+      </Svg>
     </View>
   );
 }
@@ -1019,13 +1049,13 @@ function VenueDetail({ route }: any): React.JSX.Element {
         />
       </View>
     );
-  const summary = crowdSummary(venue.id, store.reports);
+  const summary = crowdSummary(venue.id, store.reports, Date.now(), store.crowd[venue.id]);
   const saved = store.saved.includes(venue.id);
   const distance = distanceMiles(venue, store.origin);
   const venueReports = store.reports
     .filter((r) => r.venueId === venue.id)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const level = levels[summary.latest?.level ?? 0];
+  const twoColumns = Platform.OS !== "web" && width >= 900;
   return (
     <View style={s.screen}>
       <BackHeader title="Venue details" />
@@ -1035,11 +1065,12 @@ function VenueDetail({ route }: any): React.JSX.Element {
         <View
           style={[
             s.detailLayout,
-            Platform.OS !== "web" &&
-              width >= 900 && { flexDirection: "row", gap: 36 },
+            twoColumns && { flexDirection: "row", gap: 36 },
           ]}
         >
-          <View style={{ flex: 1 }}>
+          {/* flex: 1 only splits width side by side. When stacked it would split the
+              height in half and let the first column's content spill over the second. */}
+          <View style={twoColumns ? { flex: 1 } : undefined}>
             <View style={s.detailPhoto}>
               <VenuePhoto
                 venue={venue}
@@ -1072,9 +1103,9 @@ function VenueDetail({ route }: any): React.JSX.Element {
                 <Copy style={[s.meta, { marginTop: 10 }]}>
                   {summary.stale
                     ? summary.latest
-                      ? `Last reported ${level.name.toLowerCase()}.`
+                      ? "No recent reports for this venue."
                       : "Be the first to report the crowd."
-                    : level.short}
+                    : "Based on the past hour of crowd reports."}
                 </Copy>
               </View>
               <View style={s.crowdContext}>
@@ -1148,7 +1179,7 @@ function VenueDetail({ route }: any): React.JSX.Element {
               )}
             </View>
           </View>
-          <View style={{ flex: 1 }}>
+          <View style={twoColumns ? { flex: 1 } : undefined}>
             <View style={s.detailSection}>
               <Copy style={s.sectionTitle}>Getting there</Copy>
               <View
@@ -1173,6 +1204,7 @@ function VenueDetail({ route }: any): React.JSX.Element {
                 <MapPanel
                   venues={[venue]}
                   reports={store.reports}
+                  crowd={store.crowd}
                   origin={{
                     latitude: venue.latitude,
                     longitude: venue.longitude,
@@ -1239,15 +1271,65 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
   const [error, setError] = useState("");
   const [about, setAbout] = useState(false);
   const auth = route.params?.auth;
+  const token = store.account?.token;
+  const [history, setHistory] = useState<Report[] | null>(null);
+  const [historyError, setHistoryError] = useState(false);
+  const [visibleReportCount, setVisibleReportCount] = useState(3);
+  useEffect(() => setVisibleReportCount(3), [token]);
+  useFocusEffect(
+    useCallback(() => {
+      setHistory(null);
+      setHistoryError(false);
+      if (!API_URL || !token) return;
+
+      let active = true;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      async function refreshHistory() {
+        try {
+          const reports: Report[] = await request("/reports/mine/", {}, token);
+          if (active) {
+            setHistory(reports);
+            setHistoryError(false);
+          }
+        } catch {
+          if (active) {
+            setHistory(null);
+            setHistoryError(true);
+          }
+        } finally {
+          if (active) timer = setTimeout(refreshHistory, 30_000);
+        }
+      }
+
+      void refreshHistory();
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
+    }, [token]),
+  );
   useEffect(() => {
     if (!auth) return;
     setRegister(auth === "register");
     nav.setParams({ auth: undefined });
   }, [auth, nav]);
-  if (register) return <Registration complete={async a => {await store.acceptRegistration(a); setRegister(false);}} back={() => setRegister(false)} />;
-  const mine = store.reports
-    .filter((r) => r.mine)
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  if (register)
+    return (
+      <Registration
+        complete={(newUsername) => {
+          // Back to the sign-in page with the new username filled in.
+          setRegister(false);
+          setUsername(newUsername);
+          setPassword("");
+          setError("");
+          store.toast("Account created. Sign in to continue.");
+        }}
+        back={() => setRegister(false)}
+      />
+    );
+  const historyLimit = Math.min(history?.length ?? 0, 30);
+  const recentReports = history?.slice(0, Math.min(visibleReportCount, historyLimit)) ?? [];
+  const nextReportCount = Math.min(10, historyLimit - recentReports.length);
   return (
     <ScrollView
       keyboardShouldPersistTaps="handled"
@@ -1288,7 +1370,7 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
             </Pressable>
             <View style={s.countDivider} />
             <View style={s.countBlock}>
-              <Copy style={s.count}>{mine.length}</Copy>
+              <Copy style={s.count}>{history?.length ?? "—"}</Copy>
               <Copy style={s.meta}>Your reports</Copy>
             </View>
           </View>
@@ -1299,14 +1381,16 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
           <Copy accessibilityRole="header" style={s.title}>{API_URL ? "Sign in" : "Sample preview"}</Copy>
           {API_URL && (
             <View style={{ gap: 12 }}>
-              <Copy style={s.factValue}>Username</Copy>
+              <Copy style={s.factValue}>Username or email</Copy>
               <TextInput
-                accessibilityLabel="Username"
+                accessibilityLabel="Username or email"
                 value={username}
                 onChangeText={setUsername}
                 style={s.field}
                 autoCapitalize="none"
+                autoCorrect={false}
                 autoComplete="username"
+                keyboardType="email-address"
               />
               <Copy style={s.factValue}>Password</Copy>
               <TextInput
@@ -1336,10 +1420,15 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
                 busy={busy}
                 disabled={!username || !password}
                 onPress={async () => {
+                  const invalid = signInIdentifierError(username);
+                  if (invalid) {
+                    setError(invalid);
+                    return;
+                  }
                   setBusy(true);
                   setError("");
                   try {
-                    await store.signIn(username, password);
+                    await store.signIn(username.trim(), password);
                     setPassword("");
                     setShowPassword(false);
                   } catch (e) {
@@ -1359,8 +1448,12 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
       {store.account && (
         <View style={s.detailSection}>
           <Copy style={s.sectionTitle}>Your recent reports</Copy>
-          {mine.length ? (
-            mine.map((r) => (
+          {history === null ? (
+            <Copy style={s.meta}>
+              {historyError ? "Couldn’t load your reports." : "Loading your reports…"}
+            </Copy>
+          ) : recentReports.length ? (
+            recentReports.map((r) => (
               <View key={r.id} style={s.recentReport}>
                 <View style={s.reportAvatar}>
                   <Check size={18} color={c.accent} />
@@ -1390,6 +1483,27 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
                 Your updates will appear here after you share one.
               </Copy>
             </View>
+          )}
+          {nextReportCount > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setVisibleReportCount((count) => Math.min(count + 10, 30))}
+              style={({ pressed }) => [s.passwordToggle, pressed && s.pressed]}
+            >
+              <ChevronDown size={18} color={c.accent} />
+              <Copy style={s.passwordToggleText}>
+                Show more reports
+              </Copy>
+            </Pressable>
+          )}
+          {recentReports.length > 3 && (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setVisibleReportCount(3)}
+              style={({ pressed }) => [s.passwordToggle, pressed && s.pressed]}
+            >
+              <Copy style={s.passwordToggleText}>Show fewer reports</Copy>
+            </Pressable>
           )}
         </View>
       )}
@@ -1501,6 +1615,32 @@ function Sheet({
     </Modal>
   );
 }
+// Shown only when the system will no longer prompt, so settings are the only way to turn location on.
+function LocationHelp({
+  access,
+}: {
+  access: LocationAccess | null;
+}): React.JSX.Element | null {
+  if (access !== "blocked") return null;
+  if (Platform.OS === "web")
+    return (
+      <Copy style={[s.tiny, { textAlign: "center", marginTop: 8 }]}>
+        Location is blocked for this site. Allow it from the lock icon in your
+        browser’s address bar, then try again.
+      </Copy>
+    );
+  return (
+    <View style={{ marginTop: 8 }}>
+      <Copy style={[s.tiny, { textAlign: "center", marginBottom: 8 }]}>
+        Location is off for WhatsPoppin. Turn it on in Settings, then come
+        back.
+      </Copy>
+      <Button outline onPress={openLocationSettings}>
+        Open Settings
+      </Button>
+    </View>
+  );
+}
 function ReportSheet(): React.JSX.Element {
   const store = useStore();
   const venue = store.reportVenue;
@@ -1509,11 +1649,14 @@ function ReportSheet(): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [verified, setVerified] = useState<boolean | null>(null);
+  const [access, recheckAccess] = useLocationAccess();
   useEffect(() => {
     setSelected(null);
     setWait(null);
     setError("");
     setSuccess(false);
+    setVerified(null);
   }, [venue?.id]);
   const close = () => {
     if (!busy) store.setReportVenue(null);
@@ -1534,6 +1677,13 @@ function ReportSheet(): React.JSX.Element {
             {venue?.name} is {levels[selected ?? 0].name.toLowerCase()} right
             now. Thanks for the heads-up.
           </Copy>
+          {verified === false && (
+            <Copy style={[s.tiny, { textAlign: "center" }]}>
+              We couldn’t confirm you’re at the venue, so this report counts
+              for less. Allow location next time to give reports full weight.
+            </Copy>
+          )}
+          {verified === false && <LocationHelp access={access} />}
           <Button onPress={close}>Done</Button>
         </View>
       ) : (
@@ -1631,7 +1781,8 @@ function ReportSheet(): React.JSX.Element {
               setBusy(true);
               setError("");
               try {
-                await store.submitReport(selected, wait);
+                setVerified(await store.submitReport(selected, wait));
+                recheckAccess();
                 setSuccess(true);
               } catch (e) {
                 setError((e as Error).message);
@@ -1644,7 +1795,7 @@ function ReportSheet(): React.JSX.Element {
           </Button>
           <Copy style={[s.tiny, { textAlign: "center", marginTop: 12 }]}>
             {API_URL
-              ? "Only report if you’re at the venue."
+              ? "Only report if you’re at the venue. We check your location once to confirm that, and don’t save it."
               : "Preview report · saved on this device"}
           </Copy>
         </>
@@ -1662,6 +1813,7 @@ function LocationSheet({
   const store = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [access, recheckAccess] = useLocationAccess();
   return (
     <Sheet visible={visible} onClose={onClose} title="Your search area">
       <Copy style={[s.meta, { marginBottom: 20 }]}>
@@ -1704,6 +1856,7 @@ function LocationSheet({
             setError((e as Error).message);
           } finally {
             setBusy(false);
+            recheckAccess();
           }
         }}
         style={s.settingsRow}
@@ -1718,6 +1871,7 @@ function LocationSheet({
           {error}
         </Copy>
       ) : null}
+      <LocationHelp access={access} />
       <Copy style={[s.sectionTitle, { marginTop: 28, marginBottom: 16 }]}>
         Search radius
       </Copy>
@@ -1763,6 +1917,7 @@ function AppContent(): React.JSX.Element {
   const reducedMotion = useReducedMotion();
   const [venues, setVenues] = useState<Venue[]>(API_URL ? [] : demoVenues);
   const [reports, setReports] = useState<Report[]>([]);
+  const [crowd, setCrowd] = useState<Record<number, ServerCrowd>>({});
   const [saved, setSaved] = useState<number[]>([]);
   const [ready, setReady] = useState(false);
   const [account, setAccount] = useState<Account | null>(null);
@@ -1801,6 +1956,7 @@ function AppContent(): React.JSX.Element {
       if (API_URL) {
         const data = await loadVenues();
         setVenues(data.venues);
+        setCrowd(data.crowd);
         setReports((previous) =>
           data.reports.map((r) => ({
             ...r,
@@ -1891,13 +2047,38 @@ function AppContent(): React.JSX.Element {
       cooldowns.set(id, now + 500);
     }
   };
-  const submitReport = async (level: number, wait: number | null) => {
-    if (!reportVenue) return;
+  // Reads the phone's position once so the server can check the reporter is at
+  // the venue. Never blocks a report: no permission or no fix just means the
+  // report is counted with less weight.
+  const reporterPosition = async () => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) return null;
+      const fix = await Promise.race([
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      return fix
+        ? { latitude: fix.coords.latitude, longitude: fix.coords.longitude }
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const submitReport = async (
+    level: number,
+    wait: number | null,
+  ): Promise<boolean | null> => {
+    if (!reportVenue) return null;
     if (API_URL && !account) {
       setReportVenue(null);
       setAuthPrompt("report");
-      return;
+      return null;
     }
+    const position = API_URL ? await reporterPosition() : null;
+    let verified: boolean | null = null;
     let report: Report = {
       id: `local-${Date.now()}`,
       venueId: reportVenue.id,
@@ -1915,6 +2096,8 @@ function AppContent(): React.JSX.Element {
             venue: reportVenue.id,
             crowd_level: levels[level].backend,
             wait_time: wait ?? 5,
+            // Used once by the server to set verified_nearby; not stored.
+            ...(position ?? {}),
           }),
         },
         account!.token,
@@ -1923,7 +2106,9 @@ function AppContent(): React.JSX.Element {
         ...report,
         id: String(response.id),
         createdAt: response.created_at,
+        verified: !!response.verified_nearby,
       };
+      verified = !!response.verified_nearby;
     }
     const next = [report, ...reports];
     if (!API_URL)
@@ -1932,12 +2117,23 @@ function AppContent(): React.JSX.Element {
         JSON.stringify({ reports: next, saved }),
       );
     setReports(next);
+    // Pull the server's updated crowd level, which now includes this report.
+    if (API_URL) void refresh();
+    return verified;
   };
-  const signIn = async (username: string, password: string) => {
-    const session: Account = await request("/auth/sign-in/", {
-      method: "POST",
-      body: JSON.stringify({ username, password }),
-    });
+  // `login` is a username or an email address.
+  const signIn = async (login: string, password: string) => {
+    let session: Account;
+    try {
+      session = await request("/auth/sign-in/", {
+        method: "POST",
+        body: JSON.stringify({ login, password }),
+      });
+    } catch (e) {
+      // Field errors (such as an invalid email) come back keyed by field name.
+      const fieldError = e instanceof ApiError ? e.fields?.login?.[0] : undefined;
+      throw fieldError ? new Error(fieldError) : e;
+    }
     const favorites = await request("/favorites/", {}, session.token);
     const mine: Report[] = await request("/reports/mine/", {}, session.token);
     await saveSession(session);
@@ -1961,16 +2157,10 @@ function AppContent(): React.JSX.Element {
       toast((e as Error).message);
     }
   };
-  const acceptRegistration = async (session: Account) => {
-    await saveSession(session);
-    setAccount(session); setSaved([]);
-    setReports(previous => previous.map(r => ({...r, mine:false})));
-    toast("Account created");
-  };
   const store: Store = {
-    acceptRegistration,
     venues,
     reports,
+    crowd,
     saved,
     ready,
     error,
@@ -2353,7 +2543,7 @@ const s = StyleSheet.create({
   },
   crowdName: { fontFamily: f.bold, fontSize: 13, lineHeight: 18 },
   meter: { flexDirection: "row", width: 68, height: 4, gap: 3 },
-  meterPart: { flex: 1, borderRadius: 2 },
+  meterPart: { flex: 1, borderRadius: 2, backgroundColor: c.border, overflow: "hidden" },
   mapColumn: { width: "40%", marginTop: 20 },
   mapContainer: {
     height: 486,
@@ -2533,14 +2723,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: c.border,
   },
-  trend: { flexDirection: "row", marginTop: 16, marginBottom: 10 },
-  trendLevels: {
-    paddingTop: 12,
-    paddingBottom: 38,
-    justifyContent: "space-between",
-    width: 48,
-  },
-  trendTimes: { flexDirection: "row", justifyContent: "space-between" },
+  trend: { marginTop: 16, marginBottom: 12 },
   miniMap: {
     height: 170,
     borderRadius: 8,

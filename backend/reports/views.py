@@ -31,12 +31,15 @@ class ReportCreate(generics.CreateAPIView):
             get_user_model().objects.select_for_update().get(pk=user.pk)
             now = timezone.now()
             latest = CrowdReport.objects.filter(
-                user=user, venue=serializer.validated_data["venue"],
+                user=user,
                 created_at__gt=now - timedelta(minutes=5),
             ).first()
             if latest:
                 wait = (latest.created_at + timedelta(minutes=5) - now).total_seconds()
-                raise Throttled(wait=wait, detail="You can report at this venue once every 5 minutes.")
+                raise Throttled(
+                    wait=wait,
+                    detail="You can submit one crowd report every 5 minutes across all venues.",
+                )
             serializer.save(user=user)
 
 

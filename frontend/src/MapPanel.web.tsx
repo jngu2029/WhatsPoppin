@@ -3,11 +3,12 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "../tokens.css";
 import "./web.css";
-import { Venue, Report, crowdSummary, collegePark } from "./data";
+import { Venue, Report, ServerCrowd, crowdSummary, crowdTrendLabel, collegePark } from "./data";
 import { colors, levels } from "./theme";
 export type MapProps = {
   venues: Venue[];
   reports: Report[];
+  crowd?: Record<number, ServerCrowd>;
   onSelect: (id: number) => void;
   selected?: number;
   origin?: typeof collegePark;
@@ -15,6 +16,7 @@ export type MapProps = {
 export default function MapPanel({
   venues,
   reports,
+  crowd,
   onSelect,
   selected,
   origin = collegePark,
@@ -59,8 +61,9 @@ export default function MapPanel({
       .bindTooltip("Your search area")
       .addTo(markerLayer.current);
     venues.forEach((venue, index) => {
-      const summary = crowdSummary(venue.id, reports);
-      const level = levels[summary.latest?.level ?? 0];
+      const summary = crowdSummary(venue.id, reports, Date.now(), crowd?.[venue.id]);
+      const level = levels[summary.level ?? 0];
+      const trendLabel = crowdTrendLabel(venue.id, reports) ?? level.name;
       const nearEarlierVenue = venues
         .slice(0, index)
         .some(
@@ -78,19 +81,19 @@ export default function MapPanel({
       }).addTo(markerLayer.current!);
       const icon = L.divIcon({
         className: "crowd-marker-wrap",
-        html: `<span class="crowd-marker${selected === venue.id ? " selected" : ""}" style="--marker-color:${markerColor}"><span class="marker-dot"></span>${summary.stale ? "No recent report" : level.name}</span>`,
+        html: `<span class="crowd-marker${selected === venue.id ? " selected" : ""}" style="--marker-color:${markerColor}"><span class="marker-dot"></span>${summary.stale ? "No recent report" : trendLabel}</span>`,
         iconSize: [120, 40],
         iconAnchor: [60, nearEarlierVenue ? -8 : 42],
       });
       const marker = L.marker([venue.latitude, venue.longitude], {
         icon,
-        title: `${venue.name}: ${summary.stale ? "No recent report" : level.name}`,
+        title: `${venue.name}: ${summary.stale ? "No recent report" : trendLabel}`,
         keyboard: true,
       }).addTo(markerLayer.current!);
       marker.bindTooltip(venue.name, { direction: "top", offset: [0, -40] });
       marker.on("click", () => select.current(venue.id));
     });
-  }, [venues, reports, selected, origin]);
+  }, [venues, reports, crowd, selected, origin]);
   const venueKey = venues.map((v) => v.id).join(",");
   useEffect(() => {
     if (venues.length && map.current) {

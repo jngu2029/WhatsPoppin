@@ -29,10 +29,11 @@ class User(AbstractUser):
     phone = models.CharField(
         max_length=20,
         blank=False,
+        unique=True,
         validators=[
             RegexValidator(
-                regex=r"^\d{3}-\d{3}-\d{4}$",
-                message="Enter a valid phone number (e.g. 123-456-7890)."
+                regex=r"\A[0-9]{3}-[0-9]{3}-[0-9]{4}\Z",
+                message="Enter a 10-digit phone number (e.g. 301-555-0101).",
             )
         ],
     )
@@ -66,3 +67,59 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.email})"
+
+
+class SignupSession(models.Model):
+    """
+    One person's progress through the sign-up steps.
+
+    The app holds the random token and sends it with each step. An account can
+    only be created once both the phone number and the email on this session
+    have been confirmed with a code.
+    """
+
+    LIFETIME = timezone.timedelta(hours=1)
+
+    token = models.CharField(max_length=64, unique=True)
+    phone = models.CharField(max_length=20, blank=True)
+    phone_verified = models.BooleanField(default=False)
+    email = models.EmailField(blank=True)
+    email_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_expired(self):
+        return timezone.now() - self.created_at > self.LIFETIME
+
+    def __str__(self):
+        return f"Sign-up for {self.phone or 'no phone yet'}"
+
+
+class VerificationCode(models.Model):
+    """
+    The current code for one phone number or email address, plus its send limits.
+
+    There is one row per destination, so the resend limits apply to the phone
+    number or email itself, not to a sign-up session that could be restarted.
+    Only a hash of the code is stored.
+    """
+
+    PHONE = "phone"
+    EMAIL = "email"
+    CHANNELS = [(PHONE, "Phone"), (EMAIL, "Email")]
+
+    channel = models.CharField(max_length=5, choices=CHANNELS)
+    destination = models.CharField(max_length=254)
+    code_hash = models.CharField(max_length=64, blank=True)
+    expires_at = models.DateTimeField()
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    last_sent_at = models.DateTimeField()
+    resends = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["channel", "destination"], name="one_code_per_destination"),
+        ]
+
+    def __str__(self):
+        return f"{self.channel} code for {self.destination}"

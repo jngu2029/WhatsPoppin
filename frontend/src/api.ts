@@ -1,4 +1,4 @@
-import { Venue, Report, backendLevel } from "./data";
+import { Venue, Report, ServerCrowd, backendLevel } from "./data";
 export const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 export type Account = { username: string; first_name: string; token: string };
 export class ApiError extends Error {
@@ -37,6 +37,7 @@ export async function request(
 export async function loadVenues(): Promise<{
   venues: Venue[];
   reports: Report[];
+  crowd: Record<number, ServerCrowd>;
 }> {
   const data = await request("/venues/");
   return {
@@ -61,7 +62,9 @@ export async function loadVenues(): Promise<{
         level: backendLevel(r.crowd_level),
         createdAt: r.created_at,
         wait: r.wait_time === 5 ? null : r.wait_time,
+        verified: !!r.verified_nearby,
       })),
     ),
+    crowd: Object.fromEntries(data.map((v: any) => [v.id, v.crowd])),
   };
 }

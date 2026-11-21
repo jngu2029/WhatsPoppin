@@ -7,23 +7,24 @@ from .models import User
 
 
 class RegistrationSerializer(serializers.ModelSerializer):
+    """
+    The last sign-up step. The phone number and email are not sent here: they
+    come from the sign-up session (context["session"]), where both were
+    confirmed with a code.
+    """
+
     password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
     confirm_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+    signup_token = serializers.CharField(write_only=True, max_length=64)
 
     class Meta:
         model = User
-        fields = ["username", "email", "phone", "date_of_birth", "password", "confirm_password"]
+        fields = ["username", "date_of_birth", "password", "confirm_password", "signup_token"]
 
     def validate_username(self, value):
         value = User.normalize_username(value.strip())
         if User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("This username is unavailable.")
-        return value
-
-    def validate_email(self, value):
-        value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("This email is unavailable. Try signing in.")
         return value
 
     def validate_date_of_birth(self, value):
@@ -46,7 +47,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
         if password != attrs["confirm_password"]:
             errors["confirm_password"] = ["Passwords do not match."]
         try:
-            validate_password(password, User(username=attrs["username"], email=attrs["email"]))
+            validate_password(password, User(username=attrs["username"], email=self.context["session"].email))
         except DjangoValidationError as exc:
             errors.setdefault("password", []).extend(exc.messages)
         if errors:
@@ -55,4 +56,59 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop("confirm_password")
-        return User.objects.create_user(**validated_data)
+        validated_data.pop("signup_token")
+        session = self.context["session"]
+        return User.objects.create_user(**validated_data, phone=session.phone, email=session.email)
+
+
+class SignInSerializer(serializers.Serializer):
+    """
+    Sign in with a username or an email address plus the password.
+
+    Anything containing "@" is treated as an email: it must be a valid address
+    and must belong to the account whose password is given. Wrong passwords and
+    unknown usernames/emails get the same message, so the form can't be used to
+    check which accounts exist.
+    """
+
+    # "login" is the field the app sends. "username" is still accepted for older clients.
+    login = serializers.CharField(required=False, max_length=254)
+    username = serializers.CharField(required=False, max_length=254)
+    password = serializers.CharField(trim_whitespace=False, max_length=128)
+
+    INVALID = "Incorrect username, email, or password."
+
+    def validate(self, attrs):
+        from django.contrib.auth import authenticate
+        from django.core.validators import validate_email
+
+        login = (attrs.get("login") or attrs.get("username") or "").strip()
+        if not login:
+            raise serializers.ValidationError({"login": ["Enter your username or email."]})
+
+        if "@" in login:
+            try:
+                validate_email(login)
+            except DjangoValidationError:
+                raise serializers.ValidationError({"login": ["Enter a valid email address."]})
+            account = User.objects.filter(email__iexact=login).first()
+        else:
+            account = User.objects.filter(username__iexact=login).first()
+
+        if account is None:
+            # Hash anyway so an unknown account takes as long as a wrong password.
+            User().set_password(attrs["password"])
+            raise serializers.ValidationError(self.INVALID)
+
+        # authenticate() checks the password against this exact account, so an
+        # email only signs in to the account it is linked to. It also rejects
+        # inactive accounts.
+        user = authenticate(
+            request=self.context.get("request"),
+            username=account.username,
+            password=attrs["password"],
+        )
+        if user is None:
+            raise serializers.ValidationError(self.INVALID)
+        attrs["user"] = user
+        return attrs

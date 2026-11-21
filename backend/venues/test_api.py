@@ -34,7 +34,7 @@ class MobileAPITests(APITestCase):
         self.assertIsNone(mine["wait"])
         self.assertTrue(mine["mine"])
 
-    def test_report_cooldown_is_per_user_and_venue(self):
+    def test_report_cooldown_is_per_user_across_venues(self):
         self.client.force_authenticate(self.user)
         data = {"venue": self.venue.id, "crowd_level": 3, "wait_time": 5}
         url = "/api/reports/"
@@ -45,7 +45,9 @@ class MobileAPITests(APITestCase):
         self.assertEqual(CrowdReport.objects.count(), 1)
 
         other_venue = Venue.objects.create(name="Other Bar", address="Second Street", city="College Park", state="MD", latitude="38.98", longitude="-76.93")
-        self.assertEqual(self.client.post(url, {**data, "venue": other_venue.id}).status_code, 201)
+        other_data = {**data, "venue": other_venue.id}
+        self.assertEqual(self.client.post(url, other_data).status_code, 429)
+        self.assertEqual(CrowdReport.objects.count(), 1)
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.post(url, data).status_code, 201)
 
@@ -53,7 +55,7 @@ class MobileAPITests(APITestCase):
             created_at=timezone.now() - timedelta(minutes=5)
         )
         self.client.force_authenticate(self.user)
-        self.assertEqual(self.client.post(url, data).status_code, 201)
+        self.assertEqual(self.client.post(url, other_data).status_code, 201)
 
     def test_staff_can_report_at_same_venue_twice(self):
         self.user.is_staff = True
