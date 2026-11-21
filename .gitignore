@@ -224,3 +224,6 @@ frontend/dist/
 frontend/dist-native/
 frontend/dist-all/
 frontend/audit-report.json
+
+# Local handoff notes
+/WHATSPOPPIN-HANDOFF.txt
