@@ -79,9 +79,13 @@ class SignupSession(models.Model):
     """
 
     LIFETIME = timezone.timedelta(hours=1)
+    MAX_PHONES = 3
 
     token = models.CharField(max_length=64, unique=True)
     phone = models.CharField(max_length=20, blank=True)
+    # Every different number entered on this sign-up, so trying number after
+    # number to get around the per-number limits is capped at MAX_PHONES.
+    phones_tried = models.JSONField(default=list, blank=True)
     phone_verified = models.BooleanField(default=False)
     email = models.EmailField(blank=True)
     email_verified = models.BooleanField(default=False)
@@ -115,6 +119,9 @@ class VerificationCode(models.Model):
     last_sent_at = models.DateTimeField()
     resends = models.PositiveSmallIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
+    # Daily cap: when the current 24 hour window began and how many codes were sent in it.
+    day_started_at = models.DateTimeField(null=True, blank=True)
+    day_sends = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         constraints = [

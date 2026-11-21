@@ -40,9 +40,14 @@ def expired_response():
 
 
 def limited_response(error):
+    detail = (
+        "This phone number has received the most codes allowed today. Try again tomorrow."
+        if error.daily
+        else "Please wait before requesting another code."
+    )
     return Response(
         {
-            "detail": "Please wait before requesting another code.",
+            "detail": detail,
             "resend_available_at": error.available_at.isoformat(),
             "resends_left": 0,
         },
@@ -101,6 +106,17 @@ class SignupStart(SignupStep):
         if self.channel == PHONE:
             if session is None:
                 session = SignupSession.objects.create(token=secrets.token_urlsafe(32))
+            if value not in session.phones_tried:
+                if len(session.phones_tried) >= SignupSession.MAX_PHONES:
+                    return Response(
+                        {"phone": [
+                            f"You've tried {SignupSession.MAX_PHONES} phone numbers. "
+                            "Use one of those, or start sign-up over to try another."
+                        ]},
+                        status=400,
+                    )
+                session.phones_tried = [*session.phones_tried, value]
+                session.save(update_fields=["phones_tried"])
             if session.phone != value:
                 # A different number starts the rest of sign-up over.
                 session.phone, session.phone_verified = value, False

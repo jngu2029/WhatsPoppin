@@ -56,4 +56,6 @@ test("the resend button counts down, then shows the 30 minute wait", () => {
   assert.equal(resendLabel({ availableAt: now + 42_000, left: 2 }, now), "Resend code in 0:42");
   assert.equal(resendLabel({ availableAt: now + 30 * 60_000, left: 0 }, now), "Too many codes sent. Try again in 30:00");
   assert.equal(resendLabel({ availableAt: now - 1, left: 0 }, now), "Resend code");
+  // Daily limit: hours and minutes.
+  assert.equal(resendLabel({ availableAt: now + (5 * 60 + 7) * 60_000, left: 0 }, now), "Too many codes sent. Try again in 5h 7m");
 });

@@ -164,6 +164,57 @@ class PhoneStepTests(APITestCase):
         self.assertNotIn("verified", changed.data)
         self.assertFalse(SignupSession.objects.get(token=token).phone_verified)
 
+    def test_one_sign_up_can_try_at_most_three_numbers(self):
+        token = None
+        for number in ("301-555-0101", "301-555-0102", "301-555-0103"):
+            response = self.client.post(PHONE_URL, {"phone": number, "signup_token": token}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            token = response.data["signup_token"]
+        fourth = self.client.post(PHONE_URL, {"phone": "301-555-0104", "signup_token": token}, format="json")
+        self.assertEqual(fourth.status_code, 400)
+        self.assertIn("You've tried 3 phone numbers", fourth.data["phone"][0])
+        self.assertEqual(len(messaging.outbox), 3)
+        # Going back to a number already tried is still fine.
+        again = self.client.post(PHONE_URL, {"phone": "301-555-0101", "signup_token": token}, format="json")
+        self.assertEqual(again.status_code, 200)
+
+    def test_a_number_gets_at_most_ten_texts_a_day(self):
+        clock = Clock(self)
+        state = {"token": self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]}
+
+        def resend():
+            response = self.client.post(PHONE_URL + "resend/", {"signup_token": state["token"]}, format="json")
+            if response.data.get("restart"):  # Sign-ups last an hour, so start a new one like a person would.
+                response = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")
+                state["token"] = response.data.get("signup_token", state["token"])
+            return response
+
+        # Each round is up to 4 texts, then the 30 minute wait: 4 + 4 + 2 = 10.
+        sent = 1
+        while sent < 10:
+            clock.advance(minutes=31 if sent % 4 == 0 else 1)
+            response = resend()
+            self.assertEqual(response.status_code, 200, (sent, response.data))
+            sent += 1
+        self.assertEqual(response.data["resends_left"], 0)
+        self.assertEqual(len(messaging.outbox), 10)
+
+        clock.advance(minutes=31)  # Past every other wait, but still the same day.
+        blocked = resend()
+        self.assertEqual(blocked.status_code, 429)
+        self.assertIn("most codes allowed today", blocked.data["detail"])
+        # A brand-new sign-up for the same number is blocked too.
+        self.assertEqual(APIClient().post(PHONE_URL, {"phone": "301-555-0101"}, format="json").status_code, 429)
+        self.assertEqual(len(messaging.outbox), 10)
+
+        clock.advance(hours=24)
+        self.assertEqual(resend().status_code, 200)
+        self.assertEqual(len(messaging.outbox), 11)
+
+    def test_email_has_no_daily_limit(self):
+        from .verification import DAILY_LIMIT
+        self.assertNotIn(VerificationCode.EMAIL, DAILY_LIMIT)
+
     def test_failed_text_does_not_use_up_a_send(self):
         with patch("users.messaging.send_sms", side_effect=messaging.MessagingUnavailable("down")):
             response = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")

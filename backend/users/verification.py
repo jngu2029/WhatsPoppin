@@ -3,7 +3,9 @@
 Limits for each phone number or email address:
 * a code is valid for CODE_LIFETIME and allows MAX_ATTEMPTS wrong guesses;
 * a new code can be sent at most once per RESEND_COOLDOWN;
-* after MAX_RESENDS resends, the next one waits LOCKOUT.
+* after MAX_RESENDS resends, the next one waits LOCKOUT;
+* a phone number gets at most DAILY_LIMIT[PHONE] texts per day, counted
+  from the first text of that day.
 """
 
 import hashlib
@@ -25,12 +27,23 @@ RESEND_COOLDOWN = timedelta(minutes=1)
 MAX_RESENDS = 3
 LOCKOUT = timedelta(minutes=30)
 MAX_ATTEMPTS = 5
+DAY = timedelta(days=1)
+# Texts cost money and can be abused to spam a number, so phones get a daily cap.
+DAILY_LIMIT = {VerificationCode.PHONE: 10}
 
 
 class SendLimited(Exception):
-    def __init__(self, available_at):
+    def __init__(self, available_at, daily=False):
         super().__init__("Too many codes requested.")
         self.available_at = available_at
+        self.daily = daily
+
+
+def _daily_window(record, now):
+    """(sends so far today, when today's window ends), or (0, None) if no window is running."""
+    if record.day_started_at is None or now - record.day_started_at >= DAY:
+        return 0, None
+    return record.day_sends, record.day_started_at + DAY
 
 
 class CodeRejected(Exception):
@@ -65,10 +78,15 @@ def status(record):
     now = timezone.now()
     locked = record.locked_until is not None and record.locked_until > now
     available_at = record.locked_until if locked else record.last_sent_at + RESEND_COOLDOWN
-    return {
-        "resend_available_at": available_at.isoformat(),
-        "resends_left": 0 if locked else MAX_RESENDS - record.resends,
-    }
+    resends_left = 0 if locked else MAX_RESENDS - record.resends
+    limit = DAILY_LIMIT.get(record.channel)
+    if limit:
+        sent_today, window_end = _daily_window(record, now)
+        if sent_today >= limit:
+            available_at, resends_left = max(available_at, window_end), 0
+        else:
+            resends_left = min(resends_left, limit - sent_today)
+    return {"resend_available_at": available_at.isoformat(), "resends_left": resends_left}
 
 
 def pending_code(channel, destination):
@@ -95,7 +113,15 @@ def issue_code(channel, destination, deliver):
         )
         if record is None:
             record = VerificationCode(channel=channel, destination=destination, resends=0)
-        else:
+        limit = DAILY_LIMIT.get(channel)
+        if limit:
+            sent_today, window_end = _daily_window(record, now)
+            if sent_today >= limit:
+                raise SendLimited(window_end, daily=True)
+            if window_end is None:  # First text of a new day.
+                record.day_started_at, record.day_sends = now, 0
+            record.day_sends += 1
+        if record.pk is not None:
             if record.locked_until and record.locked_until > now:
                 raise SendLimited(record.locked_until)
             if record.locked_until:  # The 30 minute wait is over: start fresh.

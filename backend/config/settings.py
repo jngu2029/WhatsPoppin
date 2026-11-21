@@ -145,10 +145,12 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "reports": "30/hour",
         "login": "20/hour",
-        "register": "10/hour",
-        # Per IP. The per-number and per-email code limits live in users/verification.py.
-        "signup": "30/hour",
-        "signup_verify": "60/hour",
+        # Sign-up limits are per IP address. Kept generous because everyone on
+        # the same network (campus Wi-Fi) shares one IP. The real protection is
+        # the per-number and per-email limits in users/verification.py.
+        "register": "50/hour",
+        "signup": "100/hour",
+        "signup_verify": "200/hour",
     },
 }
 

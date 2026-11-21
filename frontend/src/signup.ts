@@ -61,6 +61,10 @@ export function isAtLeast21(iso: string, today = new Date()) {
 export function resendLabel(resend: { availableAt: number; left: number } | null, now: number) {
   if (!resend || now >= resend.availableAt) return "Resend code";
   const seconds = Math.ceil((resend.availableAt - now) / 1000);
-  const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  // Waits over an hour come from the daily limit, so show hours instead of a long minute count.
+  const clock =
+    seconds >= 3600
+      ? `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`
+      : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return resend.left === 0 ? `Too many codes sent. Try again in ${clock}` : `Resend code in ${clock}`;
 }
