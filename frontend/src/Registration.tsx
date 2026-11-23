@@ -17,10 +17,15 @@ import {
 } from "./signup";
 
 // Sign-up runs as five pages. The server holds the progress under signupToken
-// and only creates the account once the phone and email are both confirmed.
-type Step = "phone" | "phoneCode" | "email" | "emailCode" | "details";
-const STEPS: Step[] = ["phone", "phoneCode", "email", "emailCode", "details"];
+// and only creates the account once the email and phone are both confirmed.
+type Step = "email" | "emailCode" | "phone" | "phoneCode" | "details";
 type Channel = "phone" | "email";
+const STEPS: Step[] = ["email", "emailCode", "phone", "phoneCode", "details"];
+// Where each entry page goes once its code is confirmed, and where Back goes from each page.
+const AFTER: Record<Channel, Step> = { email: "phone", phone: "details" };
+const PREVIOUS: Record<Step, Step> = {
+  email: "email", emailCode: "email", phone: "email", phoneCode: "phone", details: "phone",
+};
 type Resend = { availableAt: number; left: number };
 type Errors = Record<string, string[]>;
 // DRF puts general messages in "detail" as a plain string.
@@ -38,7 +43,7 @@ const titles: Record<Step, { title: string; subtitle: string }> = {
 };
 
 export default function Registration({ complete, back }: { complete: (username: string) => void; back: () => void }) {
-  const [step, setStep] = useState<Step>("phone");
+  const [step, setStep] = useState<Step>("email");
   const [token, setToken] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
@@ -84,7 +89,7 @@ export default function Registration({ complete, back }: { complete: (username: 
     } catch (e) {
       if (e instanceof ApiError && e.fields?.restart) {
         setToken(null);
-        setStep("phone");
+        setStep("email");
         setErrors({});
         setMessage(e.fields.non_field_errors?.[0] ?? "Please start again.");
       } else if (e instanceof ApiError && e.status === 429) {
@@ -120,7 +125,7 @@ export default function Registration({ complete, back }: { complete: (username: 
       setToken(data.signup_token);
       if (channel === "phone") setPhone(data.phone);
       else setEmail(data.email);
-      if (data.verified) go(channel === "phone" ? "email" : "details");
+      if (data.verified) go(AFTER[channel]);
       else {
         setResend(readResend(data));
         go(channel === "phone" ? "phoneCode" : "emailCode");
@@ -150,7 +155,7 @@ export default function Registration({ complete, back }: { complete: (username: 
         method: "POST",
         body: JSON.stringify({ signup_token: token, code }),
       });
-      go(channel === "phone" ? "email" : "details");
+      go(AFTER[channel]);
     });
   };
 
@@ -180,10 +185,7 @@ export default function Registration({ complete, back }: { complete: (username: 
     const index = STEPS.indexOf(step);
     if (index === 0) return back();
     // From a code page or the final page, go back to the entry page before it.
-    const previous: Record<Step, Step> = {
-      phone: "phone", phoneCode: "phone", email: "phone", emailCode: "email", details: "email",
-    };
-    go(previous[step]);
+    go(PREVIOUS[step]);
   };
 
   const field = (

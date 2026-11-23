@@ -34,6 +34,13 @@ def verified_session(phone="301-555-0101", email="person@example.com"):
     )
 
 
+def new_token(email="person@example.com"):
+    """A sign-up that has finished the email steps, ready for the phone steps."""
+    return SignupSession.objects.create(
+        token=secrets.token_urlsafe(32), email=email, email_verified=True,
+    ).token
+
+
 def sms_code():
     return re.search(r"\d{6}", messaging.outbox[-1]["body"]).group()
 
@@ -60,8 +67,24 @@ class PhoneStepTests(APITestCase):
         cache.clear()
         messaging.outbox.clear()
 
+    def start_phone(self, phone):
+        """Start the phone step on a fresh sign-up whose email is confirmed."""
+        return self.client.post(PHONE_URL, {"phone": phone, "signup_token": new_token()}, format="json")
+
+    def test_email_must_be_confirmed_first(self):
+        session = SignupSession.objects.create(token=secrets.token_urlsafe(32), email="person@example.com")
+        response = self.client.post(PHONE_URL, {"phone": "301-555-0101", "signup_token": session.token}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("email", response.data["non_field_errors"][0])
+        self.assertEqual(messaging.outbox, [])
+
+    def test_no_sign_up_yet_is_rejected(self):
+        response = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(response.data["restart"])
+
     def test_valid_number_sends_a_text_with_a_code(self):
-        response = self.client.post(PHONE_URL, {"phone": "(301) 555-0101"}, format="json")
+        response = self.start_phone("(301) 555-0101")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["phone"], "301-555-0101")
         self.assertEqual(response.data["resends_left"], 3)
@@ -72,7 +95,7 @@ class PhoneStepTests(APITestCase):
     def test_invalid_numbers_are_rejected_and_nothing_is_sent(self):
         for bad in ["", "123", "301-555-010", "301-555-01011", "101-555-0101", "301-155-0101", "abc-def-ghij"]:
             with self.subTest(bad=bad):
-                response = self.client.post(PHONE_URL, {"phone": bad}, format="json")
+                response = self.start_phone(bad)
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("phone", response.data)
         self.assertEqual(messaging.outbox, [])
@@ -81,19 +104,19 @@ class PhoneStepTests(APITestCase):
         User.objects.create_user(
             username="existing", email="e@example.com", password="x", phone="301-555-0101", date_of_birth=date(2000, 1, 1),
         )
-        response = self.client.post(PHONE_URL, {"phone": "3015550101"}, format="json")
+        response = self.start_phone("3015550101")
         self.assertEqual(response.status_code, 400)
         self.assertIn("already linked", response.data["phone"][0])
         self.assertEqual(messaging.outbox, [])
 
     def test_correct_code_confirms_the_number(self):
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         response = self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": sms_code()}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(SignupSession.objects.get(token=token).phone_verified)
 
     def test_wrong_code_is_rejected_and_limited(self):
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         real = sms_code()
         wrong = "000000" if real != "000000" else "111111"
         for _ in range(5):
@@ -106,7 +129,7 @@ class PhoneStepTests(APITestCase):
 
     def test_code_expires_and_works_only_once(self):
         clock = Clock(self)
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         code = sms_code()
         clock.advance(minutes=11)
         response = self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": code}, format="json")
@@ -119,7 +142,7 @@ class PhoneStepTests(APITestCase):
 
     def test_resend_waits_a_minute_allows_three_then_waits_thirty_minutes(self):
         clock = Clock(self)
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         resend = lambda: self.client.post(PHONE_URL + "resend/", {"signup_token": token}, format="json")  # noqa: E731
 
         self.assertEqual(resend().status_code, 429)  # Too soon after the first code.
@@ -141,20 +164,20 @@ class PhoneStepTests(APITestCase):
 
     def test_limits_follow_the_number_not_the_session(self):
         Clock(self)
-        self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")
+        self.start_phone("301-555-0101")
         # A brand-new sign-up for the same number still has to wait.
-        self.assertEqual(APIClient().post(PHONE_URL, {"phone": "301-555-0101"}, format="json").status_code, 200)
+        self.assertEqual(APIClient().post(PHONE_URL, {"phone": "301-555-0101", "signup_token": new_token()}, format="json").status_code, 200)
         self.assertEqual(len(messaging.outbox), 1)  # The unused code is reused, not resent.
 
     def test_reentering_the_same_number_does_not_send_again(self):
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         again = self.client.post(PHONE_URL, {"phone": "301-555-0101", "signup_token": token}, format="json")
         self.assertEqual(again.status_code, 200)
         self.assertEqual(again.data["signup_token"], token)
         self.assertEqual(len(messaging.outbox), 1)
 
     def test_going_back_to_a_confirmed_number_skips_the_code(self):
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
+        token = self.start_phone("301-555-0101").data["signup_token"]
         self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": sms_code()}, format="json")
         again = self.client.post(PHONE_URL, {"phone": "301-555-0101", "signup_token": token}, format="json")
         self.assertTrue(again.data["verified"])
@@ -165,7 +188,7 @@ class PhoneStepTests(APITestCase):
         self.assertFalse(SignupSession.objects.get(token=token).phone_verified)
 
     def test_one_sign_up_can_try_at_most_three_numbers(self):
-        token = None
+        token = new_token()
         for number in ("301-555-0101", "301-555-0102", "301-555-0103"):
             response = self.client.post(PHONE_URL, {"phone": number, "signup_token": token}, format="json")
             self.assertEqual(response.status_code, 200, response.data)
@@ -180,12 +203,12 @@ class PhoneStepTests(APITestCase):
 
     def test_a_number_gets_at_most_ten_texts_a_day(self):
         clock = Clock(self)
-        state = {"token": self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]}
+        state = {"token": self.start_phone("301-555-0101").data["signup_token"]}
 
         def resend():
             response = self.client.post(PHONE_URL + "resend/", {"signup_token": state["token"]}, format="json")
             if response.data.get("restart"):  # Sign-ups last an hour, so start a new one like a person would.
-                response = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")
+                response = self.start_phone("301-555-0101")
                 state["token"] = response.data.get("signup_token", state["token"])
             return response
 
@@ -204,7 +227,7 @@ class PhoneStepTests(APITestCase):
         self.assertEqual(blocked.status_code, 429)
         self.assertIn("most codes allowed today", blocked.data["detail"])
         # A brand-new sign-up for the same number is blocked too.
-        self.assertEqual(APIClient().post(PHONE_URL, {"phone": "301-555-0101"}, format="json").status_code, 429)
+        self.assertEqual(APIClient().post(PHONE_URL, {"phone": "301-555-0101", "signup_token": new_token()}, format="json").status_code, 429)
         self.assertEqual(len(messaging.outbox), 10)
 
         clock.advance(hours=24)
@@ -217,7 +240,7 @@ class PhoneStepTests(APITestCase):
 
     def test_failed_text_does_not_use_up_a_send(self):
         with patch("users.messaging.send_sms", side_effect=messaging.MessagingUnavailable("down")):
-            response = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json")
+            response = self.start_phone("301-555-0101")
         self.assertEqual(response.status_code, 503)
         self.assertFalse(VerificationCode.objects.exists())
 
@@ -226,12 +249,12 @@ class EmailStepTests(APITestCase):
     def setUp(self):
         cache.clear()
         messaging.outbox.clear()
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
-        self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": sms_code()}, format="json")
-        self.token = token
+        self.token = None
 
-    def start(self, email, token=None):
-        return self.client.post(EMAIL_URL, {"email": email, "signup_token": token or self.token}, format="json")
+    def start(self, email):
+        response = self.client.post(EMAIL_URL, {"email": email, "signup_token": self.token}, format="json")
+        self.token = response.data.get("signup_token", self.token)
+        return response
 
     def test_valid_email_sends_a_code(self):
         response = self.start(" Person@Example.com ")
@@ -254,11 +277,18 @@ class EmailStepTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("already linked", response.data["email"][0])
 
-    def test_phone_must_be_confirmed_first(self):
-        token = APIClient().post(PHONE_URL, {"phone": "301-555-0102"}, format="json").data["signup_token"]
-        response = self.start("person@example.com", token)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("phone", response.data["non_field_errors"][0])
+    def test_email_starts_the_sign_up(self):
+        response = self.start("person@example.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(SignupSession.objects.filter(token=response.data["signup_token"]).exists())
+
+    def test_changing_the_email_resets_the_phone_step(self):
+        self.start("person@example.com")
+        self.client.post(EMAIL_URL + "verify/", {"signup_token": self.token, "code": email_code()}, format="json")
+        SignupSession.objects.filter(token=self.token).update(phone="301-555-0101", phone_verified=True)
+        self.start("other@example.com")
+        session = SignupSession.objects.get(token=self.token)
+        self.assertEqual((session.phone, session.phone_verified, session.email_verified), ("", False, False))
 
     def test_correct_code_confirms_the_email(self):
         self.start("person@example.com")
@@ -286,10 +316,10 @@ class RegistrationTests(APITestCase):
 
     def test_full_flow_creates_the_account_with_the_confirmed_phone_and_email(self):
         messaging.outbox.clear()
-        token = self.client.post(PHONE_URL, {"phone": "301-555-0101"}, format="json").data["signup_token"]
-        self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": sms_code()}, format="json")
-        self.client.post(EMAIL_URL, {"signup_token": token, "email": "person@example.com"}, format="json")
+        token = self.client.post(EMAIL_URL, {"email": "person@example.com"}, format="json").data["signup_token"]
         self.client.post(EMAIL_URL + "verify/", {"signup_token": token, "code": email_code()}, format="json")
+        self.client.post(PHONE_URL, {"signup_token": token, "phone": "301-555-0101"}, format="json")
+        self.client.post(PHONE_URL + "verify/", {"signup_token": token, "code": sms_code()}, format="json")
 
         response = self.client.post(REGISTER_URL, details(token), format="json")
         self.assertEqual(response.status_code, 201, response.data)

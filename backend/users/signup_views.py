@@ -1,4 +1,4 @@
-"""Step-by-step sign-up: confirm a phone number, then an email, then create the account.
+"""Step-by-step sign-up: confirm an email, then a phone number, then create the account.
 
 Each step sends the signup_token returned by the first step. The same three
 views serve both channels:
@@ -34,7 +34,7 @@ def find_session(token):
 
 def expired_response():
     return Response(
-        {"non_field_errors": ["Your sign-up has expired. Start again with your phone number."], "restart": True},
+        {"non_field_errors": ["Your sign-up has expired. Start again with your email."], "restart": True},
         status=400,
     )
 
@@ -103,9 +103,20 @@ class SignupStart(SignupStep):
             noun = "phone number" if self.channel == PHONE else "email address"
             return Response({self.channel: [f"This {noun} is already linked to an account. Try signing in."]}, status=400)
 
-        if self.channel == PHONE:
+        if self.channel == EMAIL:
+            # Email is the first step, so it starts the sign-up.
             if session is None:
                 session = SignupSession.objects.create(token=secrets.token_urlsafe(32))
+            if session.email != value:
+                # A different email starts the rest of sign-up over.
+                session.email, session.email_verified = value, False
+                session.phone, session.phone_verified = "", False
+                session.save()
+        else:
+            if session is None:
+                return expired_response()
+            if not session.email_verified:
+                return Response({"non_field_errors": ["Confirm your email first."]}, status=400)
             if value not in session.phones_tried:
                 if len(session.phones_tried) >= SignupSession.MAX_PHONES:
                     return Response(
@@ -118,17 +129,7 @@ class SignupStart(SignupStep):
                 session.phones_tried = [*session.phones_tried, value]
                 session.save(update_fields=["phones_tried"])
             if session.phone != value:
-                # A different number starts the rest of sign-up over.
                 session.phone, session.phone_verified = value, False
-                session.email, session.email_verified = "", False
-                session.save()
-        else:
-            if session is None:
-                return expired_response()
-            if not session.phone_verified:
-                return Response({"non_field_errors": ["Confirm your phone number first."]}, status=400)
-            if session.email != value:
-                session.email, session.email_verified = value, False
                 session.save()
 
         # Already confirmed on this sign-up (the person went back a step): no new code needed.

@@ -44,7 +44,7 @@ class Register(APIView):
         if session is None:
             return expired_response()
         if not (session.phone_verified and session.email_verified):
-            return Response({"non_field_errors": ["Confirm your phone number and email first."]}, status=400)
+            return Response({"non_field_errors": ["Confirm your email and phone number first."]}, status=400)
 
         serializer = RegistrationSerializer(data=request.data, context={"session": session})
         serializer.is_valid(raise_exception=True)
