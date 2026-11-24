@@ -104,7 +104,7 @@ class VerificationCode(models.Model):
 
     There is one row per destination, so the resend limits apply to the phone
     number or email itself, not to a sign-up session that could be restarted.
-    Only a hash of the code is stored.
+    Stores a hash for local codes or a challenge identifier for Twilio Verify.
     """
 
     PHONE = "phone"

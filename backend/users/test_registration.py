@@ -8,7 +8,7 @@ from unittest.mock import patch
 from django.core import mail
 from django.core.cache import cache
 from django.db import close_old_connections, connection
-from django.test import TransactionTestCase
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
@@ -62,6 +62,7 @@ class Clock:
         self.now += timedelta(**kwargs)
 
 
+@override_settings(SMS_BACKEND="memory")
 class PhoneStepTests(APITestCase):
     def setUp(self):
         cache.clear()
@@ -91,6 +92,30 @@ class PhoneStepTests(APITestCase):
         self.assertTrue(response.data["signup_token"])
         self.assertEqual(messaging.outbox[-1]["to"], "301-555-0101")
         self.assertRegex(messaging.outbox[-1]["body"], r"\b\d{6}\b")
+
+    @override_settings(SMS_BACKEND="twilio", TWILIO_VERIFY_SERVICE_SID="VA" + "a" * 32)
+    @patch("users.messaging._verify_service")
+    def test_twilio_verify_owns_the_phone_code(self, service):
+        challenge_sid = "VE" + "b" * 32
+        service.return_value.verifications.create.return_value.sid = challenge_sid
+        response = self.start_phone("301-555-0101")
+        self.assertEqual(response.status_code, 200, response.data)
+        service.return_value.verifications.create.assert_called_once_with(
+            to="+13015550101", channel="sms"
+        )
+        payload = {"signup_token": response.data["signup_token"], "code": "123456"}
+        check = service.return_value.verification_checks.create
+        check.return_value.status = "pending"
+        self.assertEqual(self.client.post(PHONE_URL + "verify/", payload).status_code, 400)
+        session = SignupSession.objects.get(token=payload["signup_token"])
+        self.assertFalse(session.phone_verified)
+
+        check.return_value.status = "approved"
+        self.assertEqual(self.client.post(PHONE_URL + "verify/", payload).status_code, 200)
+        check.assert_called_with(verification_sid=challenge_sid, code="123456")
+        session.refresh_from_db()
+        self.assertTrue(session.phone_verified)
+        self.assertEqual(self.client.post(PHONE_URL + "verify/", payload).status_code, 400)
 
     def test_invalid_numbers_are_rejected_and_nothing_is_sent(self):
         for bad in ["", "123", "301-555-010", "301-555-01011", "101-555-0101", "301-155-0101", "abc-def-ghij"]:
@@ -310,6 +335,7 @@ class EmailStepTests(APITestCase):
         self.assertEqual(resend().status_code, 200)
 
 
+@override_settings(SMS_BACKEND="memory")
 class RegistrationTests(APITestCase):
     def setUp(self):
         cache.clear()

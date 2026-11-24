@@ -166,6 +166,11 @@ class SignupVerify(SignupStep):
             verification.check_code(self.channel, destination, request.data.get("code"))
         except verification.CodeRejected as error:
             return Response({"code": [str(error)]}, status=400)
-        setattr(session, f"{self.channel}_verified", True)
-        session.save(update_fields=[f"{self.channel}_verified"])
+        except messaging.MessagingUnavailable as error:
+            return Response({"detail": str(error)}, status=503)
+        updated = SignupSession.objects.filter(
+            pk=session.pk, **{self.channel: destination}
+        ).update(**{f"{self.channel}_verified": True})
+        if not updated:
+            return Response({"code": ["The signup destination changed. Request a new code."]}, status=400)
         return Response({"verified": True, self.channel: destination})
