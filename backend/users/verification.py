@@ -21,6 +21,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import VerificationCode
+from . import messaging
 
 CODE_LIFETIME = timedelta(minutes=10)
 RESEND_COOLDOWN = timedelta(minutes=1)
@@ -30,6 +31,15 @@ MAX_ATTEMPTS = 5
 DAY = timedelta(days=1)
 # Texts cost money and can be abused to spam a number, so phones get a daily cap.
 DAILY_LIMIT = {VerificationCode.PHONE: 10}
+VERIFY_PREFIX = "twilio:"
+
+
+def uses_twilio_verify(channel):
+    return (
+        channel == VerificationCode.PHONE
+        and settings.SMS_BACKEND == "twilio"
+        and bool(settings.TWILIO_VERIFY_SERVICE_SID)
+    )
 
 
 class SendLimited(Exception):
@@ -92,7 +102,10 @@ def status(record):
 def pending_code(channel, destination):
     """The record for a code that was sent and can still be used, if any."""
     record = VerificationCode.objects.filter(channel=channel, destination=destination).first()
-    if record and record.code_hash and record.expires_at > timezone.now():
+    if (
+        record and record.code_hash and record.expires_at > timezone.now()
+        and record.code_hash.startswith(VERIFY_PREFIX) == uses_twilio_verify(channel)
+    ):
         return record
     return None
 
@@ -135,21 +148,29 @@ def issue_code(channel, destination, deliver):
             else:
                 record.resends = 0
 
-        code = f"{secrets.randbelow(10**6):06d}"
-        record.code_hash = _hash(channel, destination, code)
+        if uses_twilio_verify(channel):
+            # Verify can resend the same challenge. Keep its guess count.
+            challenge = VERIFY_PREFIX + messaging.send_phone_code(destination)
+            if record.code_hash != challenge:
+                record.failed_attempts = 0
+            record.code_hash = challenge
+        else:
+            code = f"{secrets.randbelow(10**6):06d}"
+            record.code_hash = _hash(channel, destination, code)
+            record.failed_attempts = 0
         record.expires_at = now + CODE_LIFETIME
-        record.failed_attempts = 0
         record.last_sent_at = now
         if record.resends >= MAX_RESENDS:
             record.locked_until = now + LOCKOUT
         record.save()
-        deliver(code)
+        if not uses_twilio_verify(channel):
+            deliver(code)
     return record
 
 
 def check_code(channel, destination, code):
     """Raise CodeRejected unless code is the current code for destination. Each code works once."""
-    code = re.sub(r"\s", "", code or "")
+    code = re.sub(r"\s", "", code) if isinstance(code, str) else ""
     # Decide inside the transaction but raise after it commits. Raising inside
     # would roll back the failed-attempt count and remove the guess limit.
     problem = None
@@ -159,18 +180,30 @@ def check_code(channel, destination, code):
             .filter(channel=channel, destination=destination)
             .first()
         )
-        if record is None or not record.code_hash or record.expires_at <= timezone.now():
+        if (
+            record is None or not record.code_hash or record.expires_at <= timezone.now()
+            or record.code_hash.startswith(VERIFY_PREFIX) != uses_twilio_verify(channel)
+        ):
             problem = "This code has expired. Request a new one."
         elif record.failed_attempts >= MAX_ATTEMPTS:
             problem = "Too many incorrect codes. Request a new one."
-        elif not re.fullmatch(r"\d{6}", code) or not hmac.compare_digest(
-            _hash(channel, destination, code), record.code_hash
-        ):
-            record.failed_attempts += 1
-            record.save(update_fields=["failed_attempts"])
-            problem = "That code is incorrect."
         else:
-            record.code_hash = ""
-            record.save(update_fields=["code_hash"])
+            approved = False
+            if re.fullmatch(r"[0-9]{6}", code):
+                if uses_twilio_verify(channel):
+                    approved = messaging.check_phone_code(
+                        record.code_hash.removeprefix(VERIFY_PREFIX), code
+                    )
+                else:
+                    approved = hmac.compare_digest(
+                        _hash(channel, destination, code), record.code_hash
+                    )
+            if approved:
+                record.code_hash = ""
+                record.save(update_fields=["code_hash"])
+            else:
+                record.failed_attempts += 1
+                record.save(update_fields=["failed_attempts"])
+                problem = "That code is incorrect."
     if problem:
         raise CodeRejected(problem)
