@@ -10,8 +10,8 @@ from reports.models import CrowdReport
 class MobileAPITests(APITestCase):
     def setUp(self):
         cache.clear()
-        self.user = User.objects.create_user(username="reporter", email="reporter@example.com", password="test-password", date_of_birth=date(2000, 1, 1), phone="301-555-0101")
-        self.other = User.objects.create_user(username="other", email="other@example.com", password="test-password", date_of_birth=date(2000, 1, 1), phone="301-555-0102")
+        self.user = User.objects.create_user(username="reporter", email="reporter@example.com", password="test-password", date_of_birth=date(2000, 1, 1))
+        self.other = User.objects.create_user(username="other", email="other@example.com", password="test-password", date_of_birth=date(2000, 1, 1))
         self.venue = Venue.objects.create(name="Test Bar", address="Test Street", city="College Park", state="MD", latitude="38.98", longitude="-76.93")
 
     def login(self):

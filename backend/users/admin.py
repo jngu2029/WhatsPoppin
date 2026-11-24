@@ -11,19 +11,18 @@ class UserAdmin(DjangoUserAdmin):
         "email",
         "first_name",
         "last_name",
-        "phone",
         "is_active",
         "is_staff",
         "is_superuser",
         "created_at",
     )
-    search_fields = ("username", "email", "first_name", "last_name", "phone")
+    search_fields = ("username", "email", "first_name", "last_name")
     list_filter = ("is_active", "is_staff")
     readonly_fields = ("created_at",)
     ordering = ("username",)
 
     fieldsets = DjangoUserAdmin.fieldsets + (
-        ("Profile", {"fields": ("phone", "date_of_birth", "created_at")}),
+        ("Profile", {"fields": ("date_of_birth", "created_at")}),
     )
     add_fieldsets = (
         (
@@ -38,7 +37,6 @@ class UserAdmin(DjangoUserAdmin):
                     "password2",
                     "first_name",
                     "last_name",
-                    "phone",
                     "date_of_birth",
                 ),
             },

@@ -5,27 +5,12 @@ import { submissionGuard } from "./submissionGuard";
 import { ArrowLeft, Eye, EyeOff, Info } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors as c, font as f } from "./theme";
-import {
-  formatBirthDate,
-  formatPhone,
-  isAtLeast21,
-  parseBirthDate,
-  passwordError,
-  phoneError,
-  emailError,
-  resendLabel,
-} from "./signup";
+import { formatBirthDate, isAtLeast21, parseBirthDate, passwordError, emailError, resendLabel } from "./signup";
 
-// Sign-up runs as five pages. The server holds the progress under signupToken
-// and only creates the account once the email and phone are both confirmed.
-type Step = "email" | "emailCode" | "phone" | "phoneCode" | "details";
-type Channel = "phone" | "email";
-const STEPS: Step[] = ["email", "emailCode", "phone", "phoneCode", "details"];
-// Where each entry page goes once its code is confirmed, and where Back goes from each page.
-const AFTER: Record<Channel, Step> = { email: "phone", phone: "details" };
-const PREVIOUS: Record<Step, Step> = {
-  email: "email", emailCode: "email", phone: "email", phoneCode: "phone", details: "phone",
-};
+// Sign-up runs as three pages. The server holds the progress under signupToken
+// and only creates the account once the email is confirmed.
+type Step = "email" | "emailCode" | "details";
+const STEPS: Step[] = ["email", "emailCode", "details"];
 type Resend = { availableAt: number; left: number };
 type Errors = Record<string, string[]>;
 // DRF puts general messages in "detail" as a plain string.
@@ -35,8 +20,6 @@ const detailOf = (e: ApiError): string | undefined => {
 };
 
 const titles: Record<Step, { title: string; subtitle: string }> = {
-  phone: { title: "What’s your phone number?", subtitle: "We’ll text you a code to confirm it’s yours." },
-  phoneCode: { title: "Enter the code we texted you", subtitle: "" },
   email: { title: "What’s your email?", subtitle: "We’ll email you a code to confirm it’s yours." },
   emailCode: { title: "Enter the code we emailed you", subtitle: "" },
   details: { title: "Finish your account", subtitle: "Pick a username and password." },
@@ -45,7 +28,6 @@ const titles: Record<Step, { title: string; subtitle: string }> = {
 export default function Registration({ complete, back }: { complete: (username: string) => void; back: () => void }) {
   const [step, setStep] = useState<Step>("email");
   const [token, setToken] = useState<string | null>(null);
-  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [resend, setResend] = useState<Resend | null>(null);
@@ -61,7 +43,7 @@ export default function Registration({ complete, back }: { complete: (username: 
   const insets = useSafeAreaInsets();
 
   // Tick once a second on the code pages so the resend countdown stays current.
-  const onCodeStep = step === "phoneCode" || step === "emailCode";
+  const onCodeStep = step === "emailCode";
   useEffect(() => {
     if (!onCodeStep) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -109,53 +91,52 @@ export default function Registration({ complete, back }: { complete: (username: 
     }
   };
 
-  const start = (channel: Channel) => {
-    const value = channel === "phone" ? phone : email.trim();
-    const invalid = channel === "phone" ? phoneError(value) : emailError(value);
+  const start = () => {
+    const value = email.trim();
+    const invalid = emailError(value);
     if (invalid) {
-      setErrors({ [channel]: [invalid] });
+      setErrors({ email: [invalid] });
       return;
     }
     setErrors({});
     void run(async () => {
-      const data = await request(`/auth/signup/${channel}/`, {
+      const data = await request("/auth/signup/email/", {
         method: "POST",
-        body: JSON.stringify({ [channel]: value, signup_token: token }),
+        body: JSON.stringify({ email: value, signup_token: token }),
       });
       setToken(data.signup_token);
-      if (channel === "phone") setPhone(data.phone);
-      else setEmail(data.email);
-      if (data.verified) go(AFTER[channel]);
+      setEmail(data.email);
+      if (data.verified) go("details");
       else {
         setResend(readResend(data));
-        go(channel === "phone" ? "phoneCode" : "emailCode");
+        go("emailCode");
       }
     });
   };
 
-  const resendCode = (channel: Channel) =>
+  const resendCode = () =>
     run(async () => {
-      const data = await request(`/auth/signup/${channel}/resend/`, {
+      const data = await request("/auth/signup/email/resend/", {
         method: "POST",
         body: JSON.stringify({ signup_token: token }),
       });
       setResend(readResend(data));
       setCode("");
       setErrors({});
-      setMessage(channel === "phone" ? "We sent a new code to your phone." : "We sent a new code to your email.");
+      setMessage("We sent a new code to your email.");
     });
 
-  const verify = (channel: Channel) => {
+  const verify = () => {
     if (!/^\d{6}$/.test(code)) {
       setErrors({ code: ["Enter the 6-digit code."] });
       return;
     }
     void run(async () => {
-      await request(`/auth/signup/${channel}/verify/`, {
+      await request("/auth/signup/email/verify/", {
         method: "POST",
         body: JSON.stringify({ signup_token: token, code }),
       });
-      go(AFTER[channel]);
+      go("details");
     });
   };
 
@@ -184,8 +165,8 @@ export default function Registration({ complete, back }: { complete: (username: 
     if (busy) return;
     const index = STEPS.indexOf(step);
     if (index === 0) return back();
-    // From a code page or the final page, go back to the entry page before it.
-    go(PREVIOUS[step]);
+    // From the code page or the final page, go back to the email page.
+    go("email");
   };
 
   const field = (
@@ -230,12 +211,12 @@ export default function Registration({ complete, back }: { complete: (username: 
     </Pressable>
   );
 
-  const codePage = (channel: Channel) => {
+  const codePage = () => {
     const waiting = resend !== null && now < resend.availableAt;
     return (
       <>
         <Text style={styles.body}>
-          Sent to <Text style={styles.strong}>{channel === "phone" ? phone : email}</Text>. It expires in 10 minutes.
+          Sent to <Text style={styles.strong}>{email}</Text>. It expires in 10 minutes.
         </Text>
         {field("code", "Verification code", {
           value: code,
@@ -246,13 +227,13 @@ export default function Registration({ complete, back }: { complete: (username: 
           maxLength: 6,
           placeholder: "123456",
         })}
-        {primary("Confirm", () => verify(channel), code.length !== 6)}
+        {primary("Confirm", verify, code.length !== 6)}
         <View style={styles.resendRow}>
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ disabled: waiting || busy }}
             disabled={waiting || busy}
-            onPress={() => void resendCode(channel)}
+            onPress={() => void resendCode()}
             style={({ pressed }) => [styles.secondary, (waiting || busy) && styles.disabled, pressed && styles.pressed]}
           >
             <Text style={styles.secondaryText}>{resendLabel(resend, now)}</Text>
@@ -263,8 +244,8 @@ export default function Registration({ complete, back }: { complete: (username: 
             </Text>
           ) : null}
         </View>
-        <Pressable accessibilityRole="button" onPress={() => go(channel)} style={styles.secondary}>
-          <Text style={styles.secondaryText}>{channel === "phone" ? "Use a different number" : "Use a different email"}</Text>
+        <Pressable accessibilityRole="button" onPress={() => go("email")} style={styles.secondary}>
+          <Text style={styles.secondaryText}>Use a different email</Text>
         </Pressable>
       </>
     );
@@ -332,20 +313,6 @@ export default function Registration({ complete, back }: { complete: (username: 
         ) : null}
 
         <View style={styles.form}>
-          {step === "phone" && (
-            <>
-              {field("phone", "Phone number", {
-                value: phone,
-                onChangeText: (v) => setPhone(formatPhone(v)),
-                keyboardType: "phone-pad",
-                autoComplete: "tel",
-                textContentType: "telephoneNumber",
-                placeholder: "123-456-7890",
-              }, "US numbers only. Message and data rates may apply.")}
-              {primary("Send code", () => start("phone"), !phone)}
-            </>
-          )}
-          {step === "phoneCode" && codePage("phone")}
           {step === "email" && (
             <>
               {field("email", "Email address", {
@@ -356,10 +323,10 @@ export default function Registration({ complete, back }: { complete: (username: 
                 textContentType: "emailAddress",
                 placeholder: "you@example.com",
               })}
-              {primary("Send code", () => start("email"), !email.trim())}
+              {primary("Send code", start, !email.trim())}
             </>
           )}
-          {step === "emailCode" && codePage("email")}
+          {step === "emailCode" && codePage()}
           {step === "details" && (
             <>
               {field("username", "Username", {

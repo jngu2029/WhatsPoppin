@@ -3,7 +3,6 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Lower
 from django.utils import timezone
-from django.core.validators import RegexValidator
 
 
 class UserManager(DjangoUserManager):
@@ -26,17 +25,6 @@ class User(AbstractUser):
     """
 
     email = models.EmailField("email address", unique=True)
-    phone = models.CharField(
-        max_length=20,
-        blank=False,
-        unique=True,
-        validators=[
-            RegexValidator(
-                regex=r"\A[0-9]{3}-[0-9]{3}-[0-9]{4}\Z",
-                message="Enter a 10-digit phone number (e.g. 301-555-0101).",
-            )
-        ],
-    )
     date_of_birth = models.DateField(blank=False, null=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -74,19 +62,12 @@ class SignupSession(models.Model):
     One person's progress through the sign-up steps.
 
     The app holds the random token and sends it with each step. An account can
-    only be created once both the phone number and the email on this session
-    have been confirmed with a code.
+    only be created once the email on this session has been confirmed with a code.
     """
 
     LIFETIME = timezone.timedelta(hours=1)
-    MAX_PHONES = 3
 
     token = models.CharField(max_length=64, unique=True)
-    phone = models.CharField(max_length=20, blank=True)
-    # Every different number entered on this sign-up, so trying number after
-    # number to get around the per-number limits is capped at MAX_PHONES.
-    phones_tried = models.JSONField(default=list, blank=True)
-    phone_verified = models.BooleanField(default=False)
     email = models.EmailField(blank=True)
     email_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -95,21 +76,19 @@ class SignupSession(models.Model):
         return timezone.now() - self.created_at > self.LIFETIME
 
     def __str__(self):
-        return f"Sign-up for {self.phone or 'no phone yet'}"
+        return f"Sign-up for {self.email or 'no email yet'}"
 
 
 class VerificationCode(models.Model):
     """
-    The current code for one phone number or email address, plus its send limits.
+    The current code for one email address, plus its send limits.
 
-    There is one row per destination, so the resend limits apply to the phone
-    number or email itself, not to a sign-up session that could be restarted.
-    Stores a hash for local codes or a challenge identifier for Twilio Verify.
+    There is one row per email, so the resend limits apply to the email
+    itself, not to a sign-up session that could be restarted.
     """
 
-    PHONE = "phone"
     EMAIL = "email"
-    CHANNELS = [(PHONE, "Phone"), (EMAIL, "Email")]
+    CHANNELS = [(EMAIL, "Email")]
 
     channel = models.CharField(max_length=5, choices=CHANNELS)
     destination = models.CharField(max_length=254)
@@ -119,9 +98,6 @@ class VerificationCode(models.Model):
     last_sent_at = models.DateTimeField()
     resends = models.PositiveSmallIntegerField(default=0)
     locked_until = models.DateTimeField(null=True, blank=True)
-    # Daily cap: when the current 24 hour window began and how many codes were sent in it.
-    day_started_at = models.DateTimeField(null=True, blank=True)
-    day_sends = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         constraints = [

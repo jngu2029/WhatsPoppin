@@ -240,10 +240,11 @@ those accounts and explicitly resolve the conflicts, then retry. It does not
 rename, merge, or delete accounts.
 
 With Django running and `frontend/.env` pointing to its `/api` base URL, open
-**You ? Create account**. Enter username, email, phone (`301-555-0101` format),
+**You ? Create account**. Enter your email and the 6-digit code emailed to you
+(printed in the Django console unless `EMAIL_HOST` is set), then a username,
 date of birth (`MM/DD/YYYY`; you must be at least 21), and matching passwords (10+ characters, an ASCII
 uppercase letter, and a digit; Django also rejects common/similar passwords).
-Registration signs you in. Sample preview explains that the backend is needed.
+After the account is created, sign in. Sample preview explains that the backend is needed.
 If a network failure leaves the outcome unknown, try signing in first.
 
 Run backend registration tests from `backend/` with

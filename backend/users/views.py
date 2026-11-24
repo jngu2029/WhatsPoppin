@@ -34,7 +34,7 @@ class Register(APIView):
     throttle_scope = "register"
 
     def post(self, request):
-        """Create the account from a sign-up session whose phone and email are both confirmed."""
+        """Create the account from a sign-up session whose email is confirmed."""
         from django.db import IntegrityError, transaction
         from .serializers import RegistrationSerializer
         from .models import SignupSession, User
@@ -43,17 +43,15 @@ class Register(APIView):
         session = find_session(request.data.get("signup_token"))
         if session is None:
             return expired_response()
-        if not (session.phone_verified and session.email_verified):
-            return Response({"non_field_errors": ["Confirm your email and phone number first."]}, status=400)
+        if not session.email_verified:
+            return Response({"non_field_errors": ["Confirm your email first."]}, status=400)
 
         serializer = RegistrationSerializer(data=request.data, context={"session": session})
         serializer.is_valid(raise_exception=True)
         try:
             with transaction.atomic():
-                # Someone may have used this phone or email since it was confirmed.
-                if User.objects.select_for_update().filter(phone=session.phone).exists():
-                    return Response({"non_field_errors": ["This phone number is already linked to an account."], "restart": True}, status=400)
-                if User.objects.filter(email__iexact=session.email).exists():
+                # Someone may have used this email since it was confirmed.
+                if User.objects.select_for_update().filter(email__iexact=session.email).exists():
                     return Response({"non_field_errors": ["This email address is already linked to an account."], "restart": True}, status=400)
                 user = serializer.save()
                 SignupSession.objects.filter(pk=session.pk).delete()

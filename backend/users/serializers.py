@@ -8,9 +8,8 @@ from .models import User
 
 class RegistrationSerializer(serializers.ModelSerializer):
     """
-    The last sign-up step. The phone number and email are not sent here: they
-    come from the sign-up session (context["session"]), where both were
-    confirmed with a code.
+    The last sign-up step. The email is not sent here: it comes from the
+    sign-up session (context["session"]), where it was confirmed with a code.
     """
 
     password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
@@ -58,7 +57,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
         validated_data.pop("confirm_password")
         validated_data.pop("signup_token")
         session = self.context["session"]
-        return User.objects.create_user(**validated_data, phone=session.phone, email=session.email)
+        return User.objects.create_user(**validated_data, email=session.email)
 
 
 class SignInSerializer(serializers.Serializer):

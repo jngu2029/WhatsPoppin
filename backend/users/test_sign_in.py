@@ -14,11 +14,11 @@ class SignInTests(APITestCase):
         cache.clear()
         self.alex = User.objects.create_user(
             username="alex", email="alex@example.com", password=PASSWORD,
-            phone="301-555-0101", date_of_birth=date(2000, 1, 1),
+            date_of_birth=date(2000, 1, 1),
         )
         self.sam = User.objects.create_user(
             username="sam", email="sam@example.com", password="OtherPassword123",
-            phone="301-555-0102", date_of_birth=date(2000, 1, 1),
+            date_of_birth=date(2000, 1, 1),
         )
 
     def sign_in(self, login, password=PASSWORD, field="login"):

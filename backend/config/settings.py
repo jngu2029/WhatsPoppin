@@ -147,7 +147,7 @@ REST_FRAMEWORK = {
         "login": "20/hour",
         # Sign-up limits are per IP address. Kept generous because everyone on
         # the same network (campus Wi-Fi) shares one IP. The real protection is
-        # the per-number and per-email limits in users/verification.py.
+        # the per-email limits in users/verification.py.
         "register": "50/hour",
         "signup": "100/hour",
         "signup_verify": "200/hour",
@@ -155,16 +155,6 @@ REST_FRAMEWORK = {
 }
 
 # Sign-up verification codes.
-# Text messages: Twilio when these are set. Otherwise printed to the console
-# in development (DEBUG) and unavailable in production.
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_VERIFY_SERVICE_SID = os.environ.get("TWILIO_VERIFY_SERVICE_SID", "")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
-SMS_BACKEND = os.environ.get(
-    "SMS_BACKEND",
-    "twilio" if TWILIO_ACCOUNT_SID else ("console" if DEBUG else "disabled"),
-)
 # Email: SMTP when EMAIL_HOST is set, otherwise printed to the console.
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))

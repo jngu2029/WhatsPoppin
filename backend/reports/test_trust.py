@@ -38,7 +38,7 @@ class LocationVerificationTests(APITestCase):
         cache.clear()
         self.user = User.objects.create_user(
             username="reporter", email="r@example.com", password="pw-12345-xyz",
-            date_of_birth=date(2000, 1, 1), phone="301-555-0101",
+            date_of_birth=date(2000, 1, 1),
         )
         self.venue = Venue.objects.create(
             name="Test Bar", address="1 Test St", city="College Park", state="MD",

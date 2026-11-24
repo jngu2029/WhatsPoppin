@@ -18,21 +18,7 @@ test("rapid submissions send one request, and failure releases the form", async 
   await submit();
   assert.equal(calls, 2);
 });
-import {
-  emailError,
-  formatPhone,
-  isAtLeast21,
-  parseBirthDate,
-  passwordError,
-  phoneError,
-  resendLabel,
-} from "../src/signup";
-test("phone numbers must be valid 10-digit US numbers", () => {
-  assert.equal(formatPhone("(301) 555-0101"), "301-555-0101");
-  assert.equal(phoneError("301-555-0101"), null);
-  for (const bad of ["", "301-555-010", "101-555-0101", "301-155-0101"])
-    assert.ok(phoneError(bad), bad);
-});
+import { emailError, isAtLeast21, parseBirthDate, passwordError, resendLabel } from "../src/signup";
 test("emails must look like real addresses", () => {
   assert.equal(emailError(" person@example.com "), null);
   for (const bad of ["person", "person@", "@example.com", "person@example", "a b@example.com"])
@@ -56,6 +42,4 @@ test("the resend button counts down, then shows the 30 minute wait", () => {
   assert.equal(resendLabel({ availableAt: now + 42_000, left: 2 }, now), "Resend code in 0:42");
   assert.equal(resendLabel({ availableAt: now + 30 * 60_000, left: 0 }, now), "Too many codes sent. Try again in 30:00");
   assert.equal(resendLabel({ availableAt: now - 1, left: 0 }, now), "Resend code");
-  // Daily limit: hours and minutes.
-  assert.equal(resendLabel({ availableAt: now + (5 * 60 + 7) * 60_000, left: 0 }, now), "Too many codes sent. Try again in 5h 7m");
 });

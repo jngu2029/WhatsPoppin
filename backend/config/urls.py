@@ -9,9 +9,9 @@ from users.views import SignIn, SignOut, Register
 from users.signup_views import SignupResend, SignupStart, SignupVerify
 
 signup_steps = [
-    path(f"api/auth/signup/{channel}/{suffix}", view.as_view(channel=channel))
-    for channel in ("phone", "email")
-    for suffix, view in (("", SignupStart), ("resend/", SignupResend), ("verify/", SignupVerify))
+    path("api/auth/signup/email/", SignupStart.as_view()),
+    path("api/auth/signup/email/resend/", SignupResend.as_view()),
+    path("api/auth/signup/email/verify/", SignupVerify.as_view()),
 ]
 
 urlpatterns = signup_steps + [

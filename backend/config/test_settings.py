@@ -4,4 +4,3 @@ os.environ.setdefault("DJANGO_SECRET_KEY", "local-tests-only-not-for-deployment"
 os.environ["USE_SQLITE"] = "1"
 from .settings import *  # noqa: F403
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
-SMS_BACKEND = "memory"

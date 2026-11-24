@@ -29,7 +29,6 @@ class Command(BaseCommand):
             email="alex.sample@example.com",
             first_name="Alex",
             last_name="Sample",
-            phone="301-555-0101",
             date_of_birth=date(2004, 3, 15),
         )
         jordan = self._user(
@@ -37,7 +36,6 @@ class Command(BaseCommand):
             email="jordan.sample@example.com",
             first_name="Jordan",
             last_name="Sample",
-            phone="301-555-0102",
             date_of_birth=date(2003, 11, 2),
         )
         riley = self._user(
@@ -45,7 +43,6 @@ class Command(BaseCommand):
             email="riley.sample@example.com",
             first_name="Riley",
             last_name="Sample",
-            phone="301-555-0103",
             date_of_birth=date(2005, 7, 21),
         )
 
