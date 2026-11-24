@@ -13,6 +13,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
@@ -38,7 +39,9 @@ class CodeRejected(Exception):
 
 def normalize_email(raw):
     """Return a lowercase email address, or raise ValidationError."""
-    value = (raw or "").strip().lower()
+    if not isinstance(raw, str) or re.search(r"\s", raw):
+        raise ValidationError("Enter an email address without spaces.")
+    value = raw.lower()
     validate_email(value)
     return value
 
