@@ -31,7 +31,7 @@ export default function Registration({ complete, back }: { complete: (username: 
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [resend, setResend] = useState<Resend | null>(null);
-  const [form, setForm] = useState({ username: "", date_of_birth: "", password: "", confirm_password: "" });
+  const [form, setForm] = useState({ username: "", first_name: "", last_name: "", date_of_birth: "", password: "", confirm_password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
@@ -92,7 +92,7 @@ export default function Registration({ complete, back }: { complete: (username: 
   };
 
   const start = () => {
-    const value = email.trim();
+    const value = email;
     const invalid = emailError(value);
     if (invalid) {
       setErrors({ email: [invalid] });
@@ -143,6 +143,9 @@ export default function Registration({ complete, back }: { complete: (username: 
   const createAccount = () => {
     const e: Errors = {};
     if (!form.username.trim()) e.username = ["Choose a username."];
+    else if (/[^\p{L}\p{N}_]/u.test(form.username)) {
+      e.username = ["Use only letters, numbers, and underscores."];
+    }
     const dob = parseBirthDate(form.date_of_birth);
     if (!dob) e.date_of_birth = ["Enter a real date in MM/DD/YYYY format. It can’t be in the future."];
     else if (!isAtLeast21(dob)) e.date_of_birth = ["You must be at least 21 to create an account."];
@@ -155,7 +158,7 @@ export default function Registration({ complete, back }: { complete: (username: 
     void run(async () => {
       const data = await request("/auth/register/", {
         method: "POST",
-        body: JSON.stringify({ ...form, username: form.username.trim(), date_of_birth: dob, signup_token: token }),
+        body: JSON.stringify({ ...form, date_of_birth: dob, signup_token: token }),
       });
       complete(data.username);
     });
@@ -329,6 +332,26 @@ export default function Registration({ complete, back }: { complete: (username: 
           {step === "emailCode" && codePage()}
           {step === "details" && (
             <>
+              {field("first_name", "First name (optional)", {
+                value: form.first_name,
+                onChangeText: (value) => setForm((previous) => ({
+                  ...previous,
+                  first_name: value.replace(/[^\p{L}]/gu, ""),
+                })),
+                autoComplete: "given-name",
+                textContentType: "givenName",
+                maxLength: 150,
+              })}
+              {field("last_name", "Last name (optional)", {
+                value: form.last_name,
+                onChangeText: (value) => setForm((previous) => ({
+                  ...previous,
+                  last_name: value.replace(/[^\p{L}]/gu, ""),
+                })),
+                autoComplete: "family-name",
+                textContentType: "familyName",
+                maxLength: 150,
+              })}
               {field("username", "Username", {
                 value: form.username,
                 onChangeText: (v) => setForm((p) => ({ ...p, username: v })),

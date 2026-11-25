@@ -1,10 +1,12 @@
 // Checks and formatting for the sign-up pages. The server repeats every check.
 
 export function emailError(value: string): string | null {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim()) ? null : "Enter a valid email address.";
+  if (/\s/u.test(value)) return "Email addresses cannot contain spaces.";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value) ? null : "Enter a valid email address.";
 }
 
 export function passwordError(value: string): string | null {
+  if (/\s/u.test(value)) return "Passwords cannot contain spaces.";
   return value.length >= 10 && /[A-Z]/.test(value) && /[0-9]/.test(value)
     ? null
     : "Use at least 10 characters, one uppercase letter, and one number.";

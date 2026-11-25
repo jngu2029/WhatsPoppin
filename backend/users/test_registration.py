@@ -65,7 +65,8 @@ class EmailStepTests(APITestCase):
         return self.client.post(EMAIL_URL + "resend/", {"signup_token": self.token}, format="json")
 
     def test_valid_email_sends_a_code(self):
-        response = self.start(" Person@Example.com ")
+        self.assertEqual(self.start(" Person@Example.com ").status_code, 400)
+        response = self.start("Person@Example.com")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["email"], "person@example.com")
         self.assertEqual(response.data["resends_left"], 3)
@@ -200,6 +201,24 @@ class RegistrationTests(APITestCase):
         self.assertIn("Confirm your email", response.data["non_field_errors"][0])
         self.assertFalse(User.objects.exists())
 
+    def test_optional_names_accept_letters_and_reject_other_characters(self):
+        session = SignupSession.objects.create(
+            token=secrets.token_urlsafe(32), email="person@example.com", email_verified=True
+        )
+        response = self.client.post(
+            REGISTER_URL, details(session.token, first_name="Ana2", last_name="Smith!"), format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(set(response.data), {"first_name", "last_name"})
+        self.assertFalse(User.objects.exists())
+
+        response = self.client.post(
+            REGISTER_URL, details(session.token, first_name="Élodie", last_name="Smith"), format="json"
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        user = User.objects.get()
+        self.assertEqual((user.first_name, user.last_name), ("Élodie", "Smith"))
+
     def test_unknown_or_expired_session_is_rejected(self):
         self.assertEqual(self.client.post(REGISTER_URL, details("nope"), format="json").status_code, 400)
         session = verified_session()
@@ -229,6 +248,8 @@ class RegistrationTests(APITestCase):
             ("date_of_birth", "2999-01-01"), ("date_of_birth", "2000-02-30"), ("date_of_birth", "01/01/2000"),
             ("confirm_password", "different"), ("password", "Short1"), ("password", "lowercase123"),
             ("password", "NoNumbersHere"), ("is_superuser", True),
+            ("username", " newperson "), ("password", "River Camping904"),
+            ("first_name", " Ana"), ("last_name", "Van Dyke"),
         ]
         session = verified_session()
         for field, value in cases:

@@ -18,12 +18,36 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ["username", "date_of_birth", "password", "confirm_password", "signup_token"]
+        fields = [
+            "username", "first_name", "last_name", "date_of_birth",
+            "password", "confirm_password", "signup_token",
+        ]
+        extra_kwargs = {
+            "username": {"trim_whitespace": False},
+            "first_name": {"required": False, "allow_blank": True, "trim_whitespace": False},
+            "last_name": {"required": False, "allow_blank": True, "trim_whitespace": False},
+        }
+
+    def validate_first_name(self, value):
+        if value and not value.isalpha():
+            raise serializers.ValidationError("Use letters only.")
+        return value
+
+    validate_last_name = validate_first_name
 
     def validate_username(self, value):
-        value = User.normalize_username(value.strip())
+        if re.search(r"\s", value):
+            raise serializers.ValidationError("Usernames cannot contain spaces.")
+        value = User.normalize_username(value)
+        if not re.fullmatch(r"[\w]+", value):
+            raise serializers.ValidationError("Use only letters, numbers, and underscores.")
         if User.objects.filter(username__iexact=value).exists():
             raise serializers.ValidationError("This username is unavailable.")
+        return value
+
+    def validate_password(self, value):
+        if re.search(r"\s", value):
+            raise serializers.ValidationError("Passwords cannot contain spaces.")
         return value
 
     def validate_date_of_birth(self, value):
