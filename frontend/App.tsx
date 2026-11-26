@@ -1,4 +1,4 @@
-import Registration from "./src/Registration";
+import Registration, { type TopBar } from "./src/Registration";
 import React, {
   createContext,
   useCallback,
@@ -133,6 +133,9 @@ type Store = {
   // The page title shown in the top bar once the page's own title scrolls away.
   headerTitle: string | null;
   setHeaderTitle: React.Dispatch<React.SetStateAction<string | null>>;
+  // A page inside the You tab (sign-up) that puts its back arrow and title in the top bar.
+  topBar: TopBar | null;
+  setTopBar: (bar: TopBar | null) => void;
 };
 const Context = createContext<Store>(null!);
 const useStore = (): Store => useContext(Context);
@@ -484,23 +487,53 @@ function VenueRow({
     </View>
   );
 }
-function Brand(): React.JSX.Element {
-  const { headerTitle } = useStore();
+type CurrentRoute = { name: string; params?: any } | undefined;
+function Brand({
+  route,
+  onBack,
+}: {
+  route: CurrentRoute;
+  onBack: () => void;
+}): React.JSX.Element {
+  const { headerTitle, venues, topBar } = useStore();
   const { top } = useSafeAreaInsets();
   const { height } = useAppDimensions();
+  // Search and venue pages put their back arrow and title in this bar.
+  const tabBar = route?.name === "Profile" ? topBar : null;
+  const pageTitle =
+    route?.name === "Search"
+      ? "Search"
+      : route?.name === "Venue"
+        ? venues.find((v) => v.id === route.params?.id)?.name ?? "Venue"
+        : tabBar?.title ?? null;
   return (
     <View style={[s.brandOuter, { paddingTop: top }]}>
       {/* Equal-width sides keep the text centered, lined up with page titles. */}
       <View style={[s.brandBar, height < 500 && { height: 44 }]}>
         <View style={s.brandSide}>
-          <Image
-            source={LOGO}
-            style={[s.brandLogo, height < 500 && { width: 30, height: 30 }]}
-            accessible={false}
-          />
+          {pageTitle ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              onPress={tabBar ? tabBar.onBack : onBack}
+              style={({ pressed }) => [
+                s.iconButton,
+                s.brandBack,
+                pressed && { backgroundColor: "rgba(255,255,255,0.16)" },
+              ]}
+            >
+              <ArrowLeft size={24} color={c.onPrimary} strokeWidth={2} />
+            </Pressable>
+          ) : (
+            <Image
+              source={LOGO}
+              style={[s.brandLogo, height < 500 && { width: 30, height: 30 }]}
+              accessible={false}
+            />
+          )}
         </View>
         <Copy accessibilityRole="header" style={s.wordmark} numberOfLines={1}>
-          {headerTitle ?? "WhatsPoppin"}
+          {pageTitle ?? headerTitle ?? "WhatsPoppin"}
         </Copy>
         <View style={[s.brandSide, { alignItems: "flex-end" }]}>
           {!API_URL && (
@@ -962,20 +995,6 @@ function Saved(): React.JSX.Element {
     </ScrollView>
   );
 }
-function BackHeader({ title }: { title: string }): React.JSX.Element {
-  const nav = useNavigation<any>();
-  return (
-    <View style={s.backHeader}>
-      <IconButton
-        icon={ArrowLeft}
-        label="Go back"
-        onPress={() => (nav.canGoBack() ? nav.goBack() : nav.navigate("Main"))}
-      />
-      <Copy style={s.backTitle}>{title}</Copy>
-      <View style={{ width: 44 }} />
-    </View>
-  );
-}
 function SearchScreen(): React.JSX.Element {
   const store = useStore();
   const [query, setQuery] = useState("");
@@ -986,7 +1005,6 @@ function SearchScreen(): React.JSX.Element {
     );
   return (
     <View style={s.screen}>
-      <BackHeader title="Search" />
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={s.page}
@@ -1133,7 +1151,6 @@ function VenueDetail({ route }: any): React.JSX.Element {
   if (!venue)
     return (
       <View style={s.screen}>
-        <BackHeader title="Venue" />
         <Empty
           icon={MapPin}
           title="Venue not found"
@@ -1150,7 +1167,6 @@ function VenueDetail({ route }: any): React.JSX.Element {
   const twoColumns = Platform.OS !== "web" && width >= 900;
   return (
     <View style={s.screen}>
-      <BackHeader title="Venue details" />
       <ScrollView
         contentContainerStyle={[s.detailPage, { paddingBottom: 108 + bottom }]}
       >
@@ -1417,6 +1433,7 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
           store.toast("Account created. Sign in to continue.");
         }}
         back={() => setRegister(false)}
+        setTopBar={store.setTopBar}
       />
     );
   const historyLimit = Math.min(history?.length ?? 0, 30);
@@ -1427,7 +1444,7 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
       {...profileScroll.scrollProps}
       keyboardShouldPersistTaps="handled"
       style={s.screen}
-      contentContainerStyle={[s.page, { maxWidth: 760 }, !store.account && s.guestProfilePage]}
+      contentContainerStyle={[s.page, { maxWidth: 760 }]}
     >
       {store.account && (
         <>
@@ -1476,24 +1493,24 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
                 keyboardType="email-address"
               />
               <Copy style={s.factValue}>Password</Copy>
-              <TextInput
-                accessibilityLabel="Password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                style={s.field}
-                autoComplete="current-password"
-              />
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setShowPassword((shown) => !shown)}
-                style={({ pressed }) => [s.passwordToggle, pressed && s.pressed]}
-              >
-                {showPassword ? <EyeOff size={18} color={c.accent} /> : <Eye size={18} color={c.accent} />}
-                <Copy style={s.passwordToggleText}>
-                  {showPassword ? "Hide password" : "Show password"}
-                </Copy>
-              </Pressable>
+              <View>
+                <TextInput
+                  accessibilityLabel="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  style={[s.field, s.fieldWithEye]}
+                  autoComplete="current-password"
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                  onPress={() => setShowPassword((shown) => !shown)}
+                  style={({ pressed }) => [s.eye, pressed && s.pressed]}
+                >
+                  {showPassword ? <EyeOff size={20} color={c.accent} /> : <Eye size={20} color={c.accent} />}
+                </Pressable>
+              </View>
               {error ? (
                 <Copy accessibilityRole="alert" style={{ color: c.packed }}>
                   {error}
@@ -1593,17 +1610,6 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
       <View style={!store.account && s.guestFooter}>
       <Pressable
         accessibilityRole="button"
-        onPress={() => store.setLocationSheet(true)}
-        style={store.account ? s.settingsRow : s.guestUtility}
-      >
-        <MapPin size={store.account ? 20 : 15} color={c.muted} />
-        <Copy style={store.account ? s.factValue : s.guestUtilityText}>Search area</Copy>
-        <View style={{ flex: 1 }} />
-        <Copy style={s.small}>{store.radius} mi</Copy>
-        <ChevronRight size={store.account ? 18 : 14} color={c.muted} />
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
         accessibilityState={{ expanded: about }}
         onPress={() => setAbout(!about)}
         style={store.account ? s.settingsRow : s.guestUtility}
@@ -1627,21 +1633,21 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
       {store.account && (
         <Button
           outline
-          style={{ marginTop: 24 }}
+          style={{ marginTop: 16 }}
           onPress={() => void store.signOut()}
         >
           Sign out
         </Button>
       )}
       {!API_URL && (
-        <View style={[s.sampleNote, { marginTop: 28 }]}>
+        <View style={[s.sampleNote, { marginTop: 12 }]}>
           <Info size={18} color={c.muted} />
           <Copy style={[s.small, { flex: 1 }]}>
             Sample preview. Account features require a connection to WhatsPoppin.
           </Copy>
         </View>
       )}
-      {store.account && <Copy style={[s.tiny, { textAlign: "center", marginTop: 32 }]}>
+      {store.account && <Copy style={[s.tiny, { textAlign: "center", marginTop: 16 }]}>
         WhatsPoppin · College Park
       </Copy>}
     </ScrollView>
@@ -2032,6 +2038,7 @@ function AppContent(): React.JSX.Element {
   const [picker, setPicker] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<"save" | "report" | null>(null);
   const navigation = useNavigationContainerRef<Routes>();
+  const [currentRoute, setCurrentRoute] = useState<CurrentRoute>(undefined);
   const openAuth = (auth: "signIn" | "register") => {
     setAuthPrompt(null);
     navigation.navigate("Main", { screen: "Profile", params: { auth } });
@@ -2039,6 +2046,7 @@ function AppContent(): React.JSX.Element {
   const [locationSheet, setLocationSheet] = useState(false);
   const [notice, setNotice] = useState("");
   const [headerTitle, setHeaderTitle] = useState<string | null>(null);
+  const [topBar, setTopBar] = useState<TopBar | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, setMinute] = useState(0);
   const toast = (message: string) => {
@@ -2264,6 +2272,8 @@ function AppContent(): React.JSX.Element {
   const store: Store = {
     headerTitle,
     setHeaderTitle,
+    topBar,
+    setTopBar,
     venues,
     reports,
     crowd,
@@ -2295,7 +2305,14 @@ function AppContent(): React.JSX.Element {
   return (
     <Context.Provider value={store}>
       <StatusBar style="light" />
-      <Brand />
+      <Brand
+        route={currentRoute}
+        onBack={() => {
+          if (!navigation.isReady()) return;
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate("Main" as any);
+        }}
+      />
       <View
         style={{ flex: 1 }}
         aria-hidden={!!reportVenue || picker || locationSheet || !!authPrompt}
@@ -2307,6 +2324,8 @@ function AppContent(): React.JSX.Element {
       >
         <NavigationContainer<Routes>
           ref={navigation}
+          onReady={() => setCurrentRoute(navigation.getCurrentRoute())}
+          onStateChange={() => setCurrentRoute(navigation.getCurrentRoute())}
           linking={{
             prefixes: ["whatspoppin://"],
             config: {
@@ -2474,6 +2493,7 @@ const s = StyleSheet.create({
     alignItems: "center",
   },
   brandSide: { flex: 1, flexBasis: 0, minWidth: 0 },
+  brandBack: { marginLeft: -10 },
   brandLogo: { width: 38, height: 38, borderRadius: 9 },
   wordmark: {
     fontFamily: f.extra,
@@ -2781,17 +2801,6 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  backHeader: {
-    height: 60,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    width: "100%",
-    maxWidth: 1120,
-    alignSelf: "center",
-  },
-  backTitle: { fontFamily: f.semibold, fontSize: 14 },
   detailPage: {
     width: "100%",
     maxWidth: 1120,
@@ -2934,20 +2943,18 @@ const s = StyleSheet.create({
   },
   buttonText: { color: c.white, fontFamily: f.bold, fontSize: 14 },
   disabled: { opacity: 0.45 },
-  guestProfilePage: { flexGrow: 1 },
   guestAuth: {
     width: "100%",
     maxWidth: 420,
     alignSelf: "center",
-    paddingTop: 40,
+    paddingTop: 16,
     gap: 16,
   },
   guestFooter: {
     width: "100%",
     maxWidth: 420,
     alignSelf: "center",
-    marginTop: "auto",
-    paddingTop: 32,
+    marginTop: 12,
   },
   guestUtility: {
     minHeight: 44,
@@ -3007,6 +3014,18 @@ const s = StyleSheet.create({
     borderBottomColor: c.border,
   },
   about: { paddingVertical: 16 },
+  // Eye icon inside the right edge of a password box (same as Registration.tsx).
+  fieldWithEye: { paddingRight: 52 },
+  eye: {
+    position: "absolute",
+    right: 2,
+    top: 2,
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   field: {
     borderWidth: 1,
     borderColor: c.muted,

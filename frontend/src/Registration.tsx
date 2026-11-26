@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { API_URL, ApiError, request } from "./api";
 import { submissionGuard } from "./submissionGuard";
-import { ArrowLeft, Eye, EyeOff, Info } from "lucide-react-native";
+import { Eye, EyeOff, Info } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors as c, font as f } from "./theme";
 import { formatBirthDate, isAtLeast21, parseBirthDate, passwordError, emailError, resendLabel } from "./signup";
@@ -25,7 +25,18 @@ const titles: Record<Step, { title: string; subtitle: string }> = {
   details: { title: "Finish your account", subtitle: "Pick a username and password." },
 };
 
-export default function Registration({ complete, back }: { complete: (username: string) => void; back: () => void }) {
+export type TopBar = { title: string; onBack: () => void };
+
+export default function Registration({
+  complete,
+  back,
+  setTopBar,
+}: {
+  complete: (username: string) => void;
+  back: () => void;
+  // Puts the back arrow and "Create Account" in the app's top bar.
+  setTopBar?: (bar: TopBar | null) => void;
+}) {
   const [step, setStep] = useState<Step>("email");
   const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -126,15 +137,15 @@ export default function Registration({ complete, back }: { complete: (username: 
       setMessage("We sent a new code to your email.");
     });
 
-  const verify = () => {
-    if (!/^\d{6}$/.test(code)) {
+  const verify = (value = code) => {
+    if (!/^\d{6}$/.test(value)) {
       setErrors({ code: ["Enter the 6-digit code."] });
       return;
     }
     void run(async () => {
       await request("/auth/signup/email/verify/", {
         method: "POST",
-        body: JSON.stringify({ signup_token: token, code }),
+        body: JSON.stringify({ signup_token: token, code: value }),
       });
       go("details");
     });
@@ -171,15 +182,23 @@ export default function Registration({ complete, back }: { complete: (username: 
     // From the code page or the final page, go back to the email page.
     go("email");
   };
+  const goBackRef = useRef(goBack);
+  goBackRef.current = goBack;
+  useEffect(() => {
+    setTopBar?.({ title: "Create Account", onBack: () => goBackRef.current() });
+    return () => setTopBar?.(null);
+  }, [setTopBar]);
 
   const field = (
     key: string,
     label: string,
     props: React.ComponentProps<typeof TextInput>,
     hint?: string,
+    reveal?: { shown: boolean; set: (v: boolean) => void },
   ) => (
     <View style={styles.fieldGroup}>
       <Text style={styles.label}>{label}</Text>
+      <View>
       <TextInput
         accessibilityLabel={label}
         accessibilityHint={hint}
@@ -190,9 +209,11 @@ export default function Registration({ complete, back }: { complete: (username: 
         placeholderTextColor={c.placeholder}
         onFocus={() => setFocused(key)}
         onBlur={() => setFocused(null)}
-        style={[styles.field, errors[key]?.length ? styles.invalid : undefined, focused === key && styles.focused]}
+        style={[styles.field, reveal && styles.fieldWithEye, errors[key]?.length ? styles.invalid : undefined, focused === key && styles.focused]}
         {...props}
       />
+      {reveal && eyeButton(reveal.shown, reveal.set)}
+      </View>
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
       {errors[key]?.map((error, i) => (
         <Text key={i} accessibilityRole="alert" style={styles.error}>
@@ -202,15 +223,15 @@ export default function Registration({ complete, back }: { complete: (username: 
     </View>
   );
 
-  const toggle = (shown: boolean, set: (v: boolean) => void, what: string) => (
+  // Eye icon inside the right edge of a password box.
+  const eyeButton = (shown: boolean, set: (v: boolean) => void) => (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected: shown }}
+      accessibilityLabel={shown ? "Hide password" : "Show password"}
       onPress={() => set(!shown)}
-      style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.eye, pressed && styles.pressed]}
     >
-      {shown ? <EyeOff size={18} color={c.accent} /> : <Eye size={18} color={c.accent} />}
-      <Text style={styles.secondaryText}>{shown ? `Hide ${what}` : `Show ${what}`}</Text>
+      {shown ? <EyeOff size={20} color={c.accent} /> : <Eye size={20} color={c.accent} />}
     </Pressable>
   );
 
@@ -223,14 +244,19 @@ export default function Registration({ complete, back }: { complete: (username: 
         </Text>
         {field("code", "Verification code", {
           value: code,
-          onChangeText: (v) => setCode(v.replace(/\D/g, "").slice(0, 6)),
+          onChangeText: (v) => {
+            const next = v.replace(/\D/g, "").slice(0, 6);
+            setCode(next);
+            // Submit as soon as the sixth digit goes in (typed or pasted).
+            if (next.length === 6 && code.length < 6) verify(next);
+          },
           keyboardType: "number-pad",
           autoComplete: "one-time-code",
           textContentType: "oneTimeCode",
           maxLength: 6,
           placeholder: "123456",
         })}
-        {primary("Confirm", verify, code.length !== 6)}
+        {primary("Confirm", () => verify(), code.length !== 6)}
         <View style={styles.resendRow}>
           <Pressable
             accessibilityRole="button"
@@ -282,15 +308,6 @@ export default function Registration({ complete, back }: { complete: (username: 
           { paddingBottom: Math.max(32, insets.bottom + 16), paddingLeft: Math.max(24, insets.left), paddingRight: Math.max(24, insets.right) },
         ]}
       >
-        <Pressable
-          accessibilityRole="button"
-          disabled={busy}
-          onPress={goBack}
-          style={({ pressed }) => [styles.back, pressed && styles.pressed, busy && styles.disabled]}
-        >
-          <ArrowLeft size={20} color={c.ink} />
-          <Text style={styles.backText}>{index === 0 ? "Back to sign in" : "Back"}</Text>
-        </Pressable>
         <Text style={styles.stepLabel}>Step {index + 1} of {STEPS.length}</Text>
         <View style={styles.progress} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
           {STEPS.map((s, i) => (
@@ -370,16 +387,14 @@ export default function Registration({ complete, back }: { complete: (username: 
                 secureTextEntry: !showPassword,
                 autoComplete: "new-password",
                 textContentType: "newPassword",
-              }, "At least 10 characters, one uppercase letter, and one number.")}
-              {toggle(showPassword, setShowPassword, "password")}
+              }, "At least 10 characters, one uppercase letter, and one number.", { shown: showPassword, set: setShowPassword })}
               {field("confirm_password", "Confirm password", {
                 value: form.confirm_password,
                 onChangeText: (v) => setForm((p) => ({ ...p, confirm_password: v })),
                 secureTextEntry: !showConfirm,
                 autoComplete: "new-password",
                 textContentType: "newPassword",
-              })}
-              {toggle(showConfirm, setShowConfirm, "password")}
+              }, undefined, { shown: showConfirm, set: setShowConfirm })}
               {primary(busy ? "Creating account..." : "Create account", createAccount)}
             </>
           )}
@@ -392,8 +407,6 @@ export default function Registration({ complete, back }: { complete: (username: 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: c.background },
   page: { width: "100%", maxWidth: 560, alignSelf: "center", paddingTop: 16 },
-  back: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, alignSelf: "flex-start", marginBottom: 16 },
-  backText: { fontFamily: f.semibold, fontSize: 14, color: c.ink },
   stepLabel: { fontFamily: f.semibold, fontSize: 12, color: c.muted, marginBottom: 8 },
   progress: { flexDirection: "row", gap: 6, marginBottom: 24 },
   progressPart: { flex: 1, height: 4, borderRadius: 2, backgroundColor: c.border },
@@ -403,6 +416,9 @@ const styles = StyleSheet.create({
   subtitle: { fontFamily: f.regular, fontSize: 14, lineHeight: 22, color: c.muted },
   form: { gap: 20 },
   fieldGroup: { gap: 8 },
+  // Same eye placement as the sign-in password box in App.tsx.
+  fieldWithEye: { paddingRight: 52 },
+  eye: { position: "absolute", right: 2, top: 2, width: 44, height: 44, borderRadius: 8, alignItems: "center", justifyContent: "center" },
   label: { fontFamily: f.semibold, fontSize: 14, color: c.ink },
   field: { borderWidth: 1, borderColor: c.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, fontFamily: f.regular, fontSize: 16, color: c.ink, backgroundColor: c.white },
   focused: { borderColor: c.focus, boxShadow: `0 0 0 2px ${c.highlightLight}` },
