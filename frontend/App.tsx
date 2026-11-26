@@ -614,29 +614,29 @@ function Nearby(): React.JSX.Element {
   const { width, height } = useAppDimensions();
   const compact = height < 500;
   const desktop = width >= 1000;
-  // On narrow phones List/Map show icons only so the location row stays on one line.
-  const narrow = width < 420;
   const [mode, setMode] = useState("List");
   const [filter, setFilter] = useState<number | null>(null);
-  const [sort, setSort] = useState<"distance" | "crowd">("distance");
+  const sortOptions = { distance: "Nearest", quietest: "Quietest", crowded: "Most crowded" };
+  const [sort, setSort] = useState<keyof typeof sortOptions>("distance");
+  const [sortOpen, setSortOpen] = useState(false);
+  const showSort = desktop || mode === "List";
+  const now = Date.now();
   const venues = store.venues
-    .filter((v) => distanceMiles(v, store.origin) <= store.radius)
-    .filter(
-      (v) =>
-        filter === null ||
-        (!crowdSummary(v.id, store.reports, Date.now(), store.crowd[v.id]).stale &&
-          crowdSummary(v.id, store.reports, Date.now(), store.crowd[v.id]).level === filter),
+    .map((venue) => {
+      const distance = distanceMiles(venue, store.origin);
+      const summary = crowdSummary(venue.id, store.reports, now, store.crowd[venue.id]);
+      return { venue, distance, level: summary.stale ? null : summary.level };
+    })
+    .filter(({ distance, level }) =>
+      distance <= store.radius && (filter === null || filter === level),
     )
-    .sort((a, b) =>
-      sort === "distance"
-        ? distanceMiles(a, store.origin) - distanceMiles(b, store.origin)
-        : (crowdSummary(a.id, store.reports, Date.now(), store.crowd[a.id]).stale
-            ? 5
-            : crowdSummary(a.id, store.reports, Date.now(), store.crowd[a.id]).level!) -
-          (crowdSummary(b.id, store.reports, Date.now(), store.crowd[b.id]).stale
-            ? 5
-            : crowdSummary(b.id, store.reports, Date.now(), store.crowd[b.id]).level!),
-    );
+    .sort((a, b) => {
+      if (sort === "distance" || a.level === b.level) return a.distance - b.distance;
+      if (a.level === null) return 1;
+      if (b.level === null) return -1;
+      return sort === "crowded" ? b.level - a.level : a.level - b.level;
+    })
+    .map(({ venue }) => venue);
   const { scrollProps, onTitleLayout } = useScrollTitle("Nearby Tonight");
   return (
     <ScrollView
@@ -720,76 +720,96 @@ function Nearby(): React.JSX.Element {
           </Pressable>
         </View>
       ) : null}
-      <View style={s.resultsHeader}>
+      <View style={[s.resultsHeader, s.nearbyControls]}>
         <View style={s.locationBlock}>
-          <View style={s.locationLine}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Change search area"
-              onPress={() => store.setLocationSheet(true)}
-              style={s.locationButton}
-            >
-              <MapPin size={17} color={c.accent} strokeWidth={1.8} />
-              <Copy style={s.locationText} numberOfLines={1}>
-                {store.origin === collegePark
-                  ? "College Park, MD"
-                  : "Near your location"}
-              </Copy>
+          <View style={s.locationControls}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Change search area"
+            onPress={() => store.setLocationSheet(true)}
+            style={s.locationButton}
+          >
+            <MapPin size={17} color={c.accent} strokeWidth={1.8} />
+            <Copy style={s.locationText} numberOfLines={1}>
+              {store.origin === collegePark
+                ? "College Park, MD"
+                : "Near your location"}
+            </Copy>
             </Pressable>
-            <IconButton
-              icon={Settings2}
-              label="Set search area and radius"
-              onPress={() => store.setLocationSheet(true)}
-            />
-          </View>
-        </View>
-        <View style={s.resultsRight}>
-          <View style={s.resultActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setSort(sort === "distance" ? "crowd" : "distance")}
+              accessibilityLabel="Open location filters"
+              onPress={() => store.setLocationSheet(true)}
+              style={({ pressed }) => [s.locationFilterButton, pressed && s.pressed]}
+            >
+              {({ pressed }) => <Settings2 size={20} color={pressed ? c.ink : c.muted} />}
+            </Pressable>
+          </View>
+          {showSort && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Sort venues: ${sortOptions[sort]}`}
+              accessibilityState={{ expanded: sortOpen }}
+              onPress={() => setSortOpen((open) => !open)}
               style={s.sortButton}
             >
-              <Copy style={s.small}>
-                {sort === "distance"
-                  ? desktop
-                    ? "Nearest first"
-                    : "Nearest"
-                  : desktop
-                    ? "Quietest first"
-                    : "Quietest"}
-              </Copy>
+              <Copy style={s.small}>{sortOptions[sort]}</Copy>
               <ChevronDown size={14} color={c.muted} />
             </Pressable>
-            {!desktop && (
-              <View style={s.segment}>
-                {["List", "Map"].map((item) => {
-                  const Icon = item === "List" ? List : MapIcon;
-                  return (
-                    <Pressable
-                      key={item}
-                      accessibilityRole="button"
-                      accessibilityLabel={item}
-                      accessibilityState={{ selected: mode === item }}
-                      onPress={() => setMode(item)}
-                      style={[s.segmentItem, narrow && { paddingHorizontal: 12 }, mode === item && s.segmentActive]}
-                    >
-                      <Icon size={15} color={mode === item ? c.ink : c.muted} />
-                      {!narrow && (
-                        <Copy
-                          style={[s.segmentText, mode === item && { color: c.ink }]}
-                        >
-                          {item}
-                        </Copy>
-                      )}
-                    </Pressable>
-                  );
-                })}
-              </View>
-            )}
-          </View>
+          )}
         </View>
+        {!desktop && (
+          <View style={s.segment}>
+            {["List", "Map"].map((item) => {
+              const Icon = item === "List" ? List : MapIcon;
+              const selected = mode === item;
+              const foreground = selected ? c.white : c.ink;
+              return (
+                <Pressable
+                  key={item}
+                  accessibilityRole="button"
+                  accessibilityLabel={item}
+                  accessibilityState={{ selected }}
+                  onPress={() => {
+                    setMode(item);
+                    setSortOpen(false);
+                  }}
+                  style={[s.segmentItem, selected && s.filterSelected]}
+                >
+                  <Icon size={15} color={foreground} />
+                  <Copy style={[s.segmentText, { color: foreground }]}>
+                    {item}
+                  </Copy>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
       </View>
+      {showSort && sortOpen && (
+        <View style={s.sortMenu}>
+          {(Object.keys(sortOptions) as (keyof typeof sortOptions)[]).map((option, index) => (
+            <Pressable
+              key={option}
+              accessibilityRole="button"
+              accessibilityState={{ selected: option === sort }}
+              onPress={() => {
+                setSort(option);
+                setSortOpen(false);
+              }}
+              style={({ pressed }) => [
+                s.sortOption,
+                index > 0 && s.sortOptionDivider,
+                option === sort && s.sortOptionSelected,
+                pressed && s.pressed,
+              ]}
+            >
+              <Copy style={s.factValue}>{sortOptions[option]}</Copy>
+              {option === sort && <Check size={16} color={c.accent} />}
+            </Pressable>
+          ))}
+        </View>
+      )}
       {!store.ready ? (
         <View style={s.empty}>
           <ActivityIndicator color={c.accent} />
@@ -1578,9 +1598,9 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
             ))
           ) : (
             <View style={{ paddingVertical: 24 }}>
-              <Copy style={s.meta}>Nothing to report yet.</Copy>
-              <Copy style={[s.small, { marginTop: 4 }]}>
-                Your updates will appear here after you share one.
+              <Copy style={s.meta}>No reports yet</Copy>
+              <Copy style={[s.meta, { marginTop: 4 }]}>
+                Your updates will appear here after you share one
               </Copy>
             </View>
           )}
@@ -2508,12 +2528,14 @@ const s = StyleSheet.create({
   previewTag: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "100%" },
   previewDot: { width: 6, height: 6, backgroundColor: c.cta, borderRadius: 3 },
   previewText: { fontSize: 11, color: c.onPrimaryMuted, fontFamily: f.medium },
-  locationBlock: { flexShrink: 1, minWidth: 0 },
-  resultsRight: { alignItems: "flex-end", marginLeft: "auto", flexShrink: 0 },
-  locationLine: {
-    flexDirection: "row",
+  locationBlock: { flexShrink: 1, minWidth: 0, paddingTop: 4 },
+  locationControls: { flexDirection: "row", alignItems: "center" },
+  locationFilterButton: {
+    width: 44,
+    height: 44,
     alignItems: "center",
-    gap: 4,
+    justifyContent: "center",
+    borderRadius: 8,
   },
   locationButton: {
     flexDirection: "row",
@@ -2612,15 +2634,39 @@ const s = StyleSheet.create({
     lineHeight: 25,
     letterSpacing: -0.25,
   },
-  resultActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  nearbyControls: { alignItems: "flex-start", paddingBottom: 10 },
+  sortMenu: {
+    alignSelf: "flex-start",
+    minWidth: 170,
+    borderWidth: 1,
+    borderColor: c.border,
+    borderRadius: 8,
+    backgroundColor: c.white,
+    overflow: "hidden",
+    marginBottom: 12,
+  },
+  sortOption: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  sortOptionDivider: { borderTopWidth: 1, borderTopColor: c.border },
+  sortOptionSelected: { backgroundColor: c.accentLight },
   sortButton: {
+    alignSelf: "flex-start",
+    marginLeft: 3,
     flexDirection: "row",
     alignItems: "center",
     minHeight: 44,
+    marginTop: -6,
     gap: 5,
   },
   segment: {
     flexDirection: "row",
+    flexShrink: 0,
     padding: 3,
     borderRadius: 7,
     backgroundColor: c.white,
@@ -2635,8 +2681,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 9,
     borderRadius: 5,
   },
-  segmentActive: { backgroundColor: c.accentLight },
-  segmentText: { fontSize: 12, color: c.muted, fontFamily: f.semibold },
+  segmentText: { fontSize: 12, fontFamily: f.semibold },
   discovery: { flexDirection: "column", alignItems: "flex-start" },
   listColumn: { flex: 1, width: "100%", minWidth: 0 },
   venueRow: {
