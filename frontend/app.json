@@ -4,6 +4,7 @@
     "slug": "whatspoppin",
     "version": "1.0.0",
     "orientation": "default",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "whatspoppin",
     "ios": {
@@ -11,13 +12,32 @@
       "bundleIdentifier": "com.whatspoppin.app"
     },
     "android": {
-      "package": "com.whatspoppin.app"
+      "package": "com.whatspoppin.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#04060A"
+      }
     },
     "web": {
       "bundler": "metro",
-      "name": "WhatsPoppin · Find your kind of night",
-      "description": "Nearby bars, current crowd levels, and quick community reports."
+      "name": "WhatsPoppin \u00b7 Find your kind of night",
+      "description": "Nearby bars, current crowd levels, and quick community reports.",
+      "favicon": "./assets/favicon.png",
+      "themeColor": "#620452"
     },
-    "plugins": ["expo-font", "expo-status-bar", "expo-secure-store"]
+    "plugins": [
+      "expo-font",
+      "expo-status-bar",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#620452"
+        }
+      ]
+    ]
   }
 }

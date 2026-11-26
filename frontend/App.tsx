@@ -22,12 +22,16 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import {
   useFonts,
   Manrope_400Regular,
@@ -69,7 +73,6 @@ import {
   MapPin,
   Search,
   Settings2,
-  ShieldCheck,
   UserRound,
   Users,
   X,
@@ -127,9 +130,50 @@ type Store = {
   toast: (text: string) => void;
   setPicker: (p: boolean) => void;
   setLocationSheet: (p: boolean) => void;
+  // The page title shown in the top bar once the page's own title scrolls away.
+  headerTitle: string | null;
+  setHeaderTitle: React.Dispatch<React.SetStateAction<string | null>>;
 };
 const Context = createContext<Store>(null!);
 const useStore = (): Store => useContext(Context);
+
+// Puts `title` in the top bar while the page's own title is scrolled out of view.
+// Attach onTitleLayout to a direct child of the ScrollView content that holds the title.
+function useScrollTitle(title: string | null) {
+  const { setHeaderTitle } = useStore();
+  const titleBottom = useRef(Infinity);
+  const offset = useRef(0);
+  const focused = useRef(false);
+  const update = useCallback(() => {
+    if (!focused.current) return;
+    setHeaderTitle(title && offset.current > titleBottom.current ? title : null);
+  }, [title, setHeaderTitle]);
+  useFocusEffect(
+    useCallback(() => {
+      focused.current = true;
+      update();
+      return () => {
+        focused.current = false;
+        // Only clear our own title, in case the next page already set its own.
+        setHeaderTitle((current) => (current === title ? null : current));
+      };
+    }, [update, title, setHeaderTitle]),
+  );
+  return {
+    scrollProps: {
+      scrollEventThrottle: 16,
+      onScroll: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        offset.current = e.nativeEvent.contentOffset.y;
+        update();
+      },
+    },
+    onTitleLayout: (e: LayoutChangeEvent) => {
+      const { y, height } = e.nativeEvent.layout;
+      titleBottom.current = y + height;
+      update();
+    },
+  };
+}
 type Routes = {
   Main: NavigatorScreenParams<{
     Nearby: undefined;
@@ -142,6 +186,11 @@ type Routes = {
 const Stack = createNativeStackNavigator<Routes>();
 const Tabs = createBottomTabNavigator();
 const STORAGE = "whatspoppin-preview-v1";
+const LOGO = require("./assets/logo.png");
+// How long saving/unsaving a venue waits before it can be pressed again.
+const SAVE_COOLDOWN_MS = 500;
+// Native builds: hold the splash screen (logo on plum, see app.json) until App hides it.
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 const waitLabels = ["0–5 min", "5–10 min", "10–20 min", "20–30 min", "30+ min"];
 
 function Copy({
@@ -311,12 +360,70 @@ function VenuePhoto({
     </View>
   );
 }
+// The bookmark as a status icon only (same look as the tappable one on Nearby).
+function SavedMark({ saved }: { saved: boolean }): React.JSX.Element {
+  return (
+    <View
+      accessible
+      accessibilityLabel={saved ? "Saved" : "Not saved"}
+      style={s.iconButton}
+    >
+      <Bookmark
+        size={22}
+        color={saved ? c.accent : c.ink}
+        fill={saved ? c.savedFill : "none"}
+        strokeWidth={1.7}
+      />
+    </View>
+  );
+}
+// Venue page: one button that saves or unsaves, then waits 0.5 s before it
+// can be pressed again. Saved state is shared, so every bookmark icon updates.
+function SaveVenueButton({ venueId }: { venueId: number }): React.JSX.Element {
+  const store = useStore();
+  const saved = store.saved.includes(venueId);
+  const [coolingDown, setCoolingDown] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: coolingDown }}
+      disabled={coolingDown}
+      onPress={async () => {
+        setCoolingDown(true);
+        try {
+          await store.toggleSave(venueId);
+        } finally {
+          timer.current = setTimeout(() => setCoolingDown(false), SAVE_COOLDOWN_MS);
+        }
+      }}
+      style={({ pressed }) => [
+        s.saveVenueButton,
+        // Saved: the saved-icon pink. Not saved: the "Moderate" crowd color.
+        { backgroundColor: saved ? c.savedFill : levels[1].color },
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <Bookmark size={16} color={c.white} fill={saved ? c.white : "none"} strokeWidth={1.8} />
+      <Copy style={s.saveVenueText}>
+        {saved ? "Remove venue from saved" : "Save this venue"}
+      </Copy>
+    </Pressable>
+  );
+}
 function VenueRow({
   venue,
   compact = false,
+  canSave = false,
 }: {
   venue: Venue;
   compact?: boolean;
+  // Only the Nearby list lets people save or unsave from the bookmark icon.
+  // Elsewhere it just shows whether the venue is saved.
+  canSave?: boolean;
 }): React.JSX.Element {
   const store = useStore();
   const nav = useNavigation<any>();
@@ -337,10 +444,7 @@ function VenueRow({
         />
         <View style={s.rowContent}>
           <Copy style={s.venueName}>{venue.name}</Copy>
-          <Copy style={s.meta}>
-            {venue.kind} <Copy style={s.dot}> · </Copy>
-            {distance.toFixed(1)} mi
-          </Copy>
+          <Copy style={s.meta}>{distance.toFixed(1)} mi</Copy>
           <View style={s.freshness}>
             <Clock3 size={12} color={c.muted} strokeWidth={1.7} />
             <Copy style={s.small}>{ageLabel(summary.age)}</Copy>
@@ -355,16 +459,20 @@ function VenueRow({
         </View>
       </Pressable>
       <View style={s.rowTrailing}>
-        <IconButton
-          icon={Bookmark}
-          label={
-            store.saved.includes(venue.id)
-              ? `Unsave ${venue.name}`
-              : `Save ${venue.name}`
-          }
-          active={store.saved.includes(venue.id)}
-          onPress={() => void store.toggleSave(venue.id)}
-        />
+        {canSave ? (
+          <IconButton
+            icon={Bookmark}
+            label={
+              store.saved.includes(venue.id)
+                ? `Unsave ${venue.name}`
+                : `Save ${venue.name}`
+            }
+            active={store.saved.includes(venue.id)}
+            onPress={() => void store.toggleSave(venue.id)}
+          />
+        ) : (
+          <SavedMark saved={store.saved.includes(venue.id)} />
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`View crowd at ${venue.name}`}
@@ -377,34 +485,32 @@ function VenueRow({
   );
 }
 function Brand(): React.JSX.Element {
+  const { headerTitle } = useStore();
   const { top } = useSafeAreaInsets();
   const { height } = useAppDimensions();
   return (
     <View style={[s.brandOuter, { paddingTop: top }]}>
+      {/* Equal-width sides keep the text centered, lined up with page titles. */}
       <View style={[s.brandBar, height < 500 && { height: 44 }]}>
-        <View style={s.brandName}>
-          <View style={s.brandMark}>
-            {[11, 19, 27].map((height, i) => (
-              <View
-                key={i}
-                style={{
-                  width: 6,
-                  height,
-                  borderRadius: 2,
-                  backgroundColor: c.accent,
-                }}
-              />
-            ))}
-          </View>
-          <Copy style={s.wordmark}>
-            whatspoppin<Copy style={{ color: c.accent }}>.</Copy>
-          </Copy>
+        <View style={s.brandSide}>
+          <Image
+            source={LOGO}
+            style={[s.brandLogo, height < 500 && { width: 30, height: 30 }]}
+            accessible={false}
+          />
         </View>
-        <View style={s.previewTag}>
-          <View style={s.previewDot} />
-          <Copy style={s.previewText}>
-            {API_URL ? "Community reports" : "Sample preview"}
-          </Copy>
+        <Copy accessibilityRole="header" style={s.wordmark} numberOfLines={1}>
+          {headerTitle ?? "WhatsPoppin"}
+        </Copy>
+        <View style={[s.brandSide, { alignItems: "flex-end" }]}>
+          {!API_URL && (
+            <View style={s.previewTag}>
+              <View style={s.previewDot} />
+              <Copy style={s.previewText} numberOfLines={1}>
+                Sample preview
+              </Copy>
+            </View>
+          )}
         </View>
       </View>
     </View>
@@ -475,6 +581,8 @@ function Nearby(): React.JSX.Element {
   const { width, height } = useAppDimensions();
   const compact = height < 500;
   const desktop = width >= 1000;
+  // On narrow phones List/Map show icons only so the location row stays on one line.
+  const narrow = width < 420;
   const [mode, setMode] = useState("List");
   const [filter, setFilter] = useState<number | null>(null);
   const [sort, setSort] = useState<"distance" | "crowd">("distance");
@@ -496,8 +604,10 @@ function Nearby(): React.JSX.Element {
             ? 5
             : crowdSummary(b.id, store.reports, Date.now(), store.crowd[b.id]).level!),
     );
+  const { scrollProps, onTitleLayout } = useScrollTitle("Nearby Tonight");
   return (
     <ScrollView
+      {...scrollProps}
       style={s.screen}
       contentContainerStyle={[s.page, compact && { paddingTop: 8 }]}
       refreshControl={
@@ -508,43 +618,15 @@ function Nearby(): React.JSX.Element {
         />
       }
     >
-      {!compact && (
-        <View style={s.locationLine}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => store.setLocationSheet(true)}
-            style={s.locationButton}
-          >
-            <MapPin size={17} color={c.accent} strokeWidth={1.8} />
-            <Copy style={s.locationText}>
-              {store.origin === collegePark
-                ? "College Park, MD"
-                : "Near your location"}
-            </Copy>
-            <ChevronDown size={15} color={c.muted} />
-          </Pressable>
-          <Copy style={s.small}>
-            Within {store.radius} {store.radius === 1 ? "mile" : "miles"}
-          </Copy>
-        </View>
-      )}
-      <View style={[s.pageHeading, compact && { marginBottom: 8 }]}>
+      <View onLayout={onTitleLayout} style={[s.pageHeading, compact && { marginBottom: 8 }]}>
         <View style={{ flex: 1 }}>
           <Copy
             accessibilityRole="header"
             style={[s.title, compact && { fontSize: 22, lineHeight: 30 }]}
           >
-            Nearby tonight
+            Nearby Tonight
           </Copy>
-          {!compact && (
-            <Copy style={s.subtitle}>See the scene before you head out.</Copy>
-          )}
         </View>
-        <IconButton
-          icon={Search}
-          label="Search bars"
-          onPress={() => nav.navigate("Search")}
-        />
       </View>
       {!compact && (
         <Pressable
@@ -590,11 +672,6 @@ function Nearby(): React.JSX.Element {
             </Pressable>
           ))}
         </ScrollView>
-        <IconButton
-          icon={Settings2}
-          label="Set search area and radius"
-          onPress={() => store.setLocationSheet(true)}
-        />
       </View>
       {store.error ? (
         <View style={s.errorBanner}>
@@ -611,49 +688,73 @@ function Nearby(): React.JSX.Element {
         </View>
       ) : null}
       <View style={s.resultsHeader}>
-        <Copy style={[s.sectionTitle, { fontSize: 14 }]}>
-          {venues.length} nearby {venues.length === 1 ? "spot" : "spots"}
-        </Copy>
-        <View style={s.resultActions}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setSort(sort === "distance" ? "crowd" : "distance")}
-            style={s.sortButton}
-          >
-            <Copy style={s.small}>
-              {sort === "distance"
-                ? desktop
-                  ? "Nearest first"
-                  : "Nearest"
-                : desktop
-                  ? "Quietest first"
-                  : "Quietest"}
-            </Copy>
-            <ChevronDown size={14} color={c.muted} />
-          </Pressable>
-          {!desktop && (
-            <View style={s.segment}>
-              {["List", "Map"].map((item) => {
-                const Icon = item === "List" ? List : MapIcon;
-                return (
-                  <Pressable
-                    key={item}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: mode === item }}
-                    onPress={() => setMode(item)}
-                    style={[s.segmentItem, mode === item && s.segmentActive]}
-                  >
-                    <Icon size={15} color={mode === item ? c.ink : c.muted} />
-                    <Copy
-                      style={[s.segmentText, mode === item && { color: c.ink }]}
+        <View style={s.locationBlock}>
+          <View style={s.locationLine}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Change search area"
+              onPress={() => store.setLocationSheet(true)}
+              style={s.locationButton}
+            >
+              <MapPin size={17} color={c.accent} strokeWidth={1.8} />
+              <Copy style={s.locationText} numberOfLines={1}>
+                {store.origin === collegePark
+                  ? "College Park, MD"
+                  : "Near your location"}
+              </Copy>
+            </Pressable>
+            <IconButton
+              icon={Settings2}
+              label="Set search area and radius"
+              onPress={() => store.setLocationSheet(true)}
+            />
+          </View>
+        </View>
+        <View style={s.resultsRight}>
+          <View style={s.resultActions}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setSort(sort === "distance" ? "crowd" : "distance")}
+              style={s.sortButton}
+            >
+              <Copy style={s.small}>
+                {sort === "distance"
+                  ? desktop
+                    ? "Nearest first"
+                    : "Nearest"
+                  : desktop
+                    ? "Quietest first"
+                    : "Quietest"}
+              </Copy>
+              <ChevronDown size={14} color={c.muted} />
+            </Pressable>
+            {!desktop && (
+              <View style={s.segment}>
+                {["List", "Map"].map((item) => {
+                  const Icon = item === "List" ? List : MapIcon;
+                  return (
+                    <Pressable
+                      key={item}
+                      accessibilityRole="button"
+                      accessibilityLabel={item}
+                      accessibilityState={{ selected: mode === item }}
+                      onPress={() => setMode(item)}
+                      style={[s.segmentItem, narrow && { paddingHorizontal: 12 }, mode === item && s.segmentActive]}
                     >
-                      {item}
-                    </Copy>
-                  </Pressable>
-                );
-              })}
-            </View>
-          )}
+                      <Icon size={15} color={mode === item ? c.ink : c.muted} />
+                      {!narrow && (
+                        <Copy
+                          style={[s.segmentText, mode === item && { color: c.ink }]}
+                        >
+                          {item}
+                        </Copy>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
         </View>
       </View>
       {!store.ready ? (
@@ -668,7 +769,7 @@ function Nearby(): React.JSX.Element {
           {(desktop || mode === "List") && (
             <View style={s.listColumn}>
               {venues.length ? (
-                venues.map((v) => <VenueRow key={v.id} venue={v} />)
+                venues.map((v) => <VenueRow key={v.id} venue={v} canSave />)
               ) : (
                 <Empty
                   icon={Search}
@@ -703,12 +804,6 @@ function Nearby(): React.JSX.Element {
                   <Copy style={s.link}>Report</Copy>
                   <ArrowUpRight size={17} color={c.accent} />
                 </Pressable>
-              </View>
-              <View style={s.footnote}>
-                <ShieldCheck size={14} color={c.muted} />
-                <Copy style={s.small}>
-                  Community reports. Things can change quickly.
-                </Copy>
               </View>
             </View>
           )}
@@ -801,7 +896,7 @@ function VenueSearchBar({ query, setQuery, autoFocus = false, label = "Search ve
   const input = useRef<TextInput>(null);
   return (
     <View style={s.searchBar}>
-      <Search size={20} color={c.muted} />
+      <Search size={19} color={c.muted} strokeWidth={1.7} />
       <TextInput
         ref={input}
         autoFocus={autoFocus}
@@ -809,7 +904,7 @@ function VenueSearchBar({ query, setQuery, autoFocus = false, label = "Search ve
         value={query}
         onChangeText={setQuery}
         placeholder="Bar, neighborhood, or street"
-        placeholderTextColor={c.muted}
+        placeholderTextColor={c.placeholder}
         style={s.searchInput}
         returnKeyType="search"
         autoCorrect={false}
@@ -835,16 +930,13 @@ function Saved(): React.JSX.Element {
   const venues = store.venues.filter((v) => store.saved.includes(v.id));
   const results = venues.filter((v) => matchesVenue(v, query));
   const searching = Boolean(query.trim());
+  const { scrollProps, onTitleLayout } = useScrollTitle("Saved Spots");
   return (
-    <ScrollView keyboardShouldPersistTaps="handled" style={s.screen} contentContainerStyle={s.page}>
-      <View style={s.pageHeading}>
+    <ScrollView {...scrollProps} keyboardShouldPersistTaps="handled" style={s.screen} contentContainerStyle={s.page}>
+      <View onLayout={onTitleLayout} style={s.pageHeading}>
         <View style={{ flex: 1 }}>
-          <Copy style={s.title}>Saved spots</Copy>
-          <Copy style={s.subtitle}>
-            Saved spots. A fresh look at the crowd.
-          </Copy>
+          <Copy style={s.title}>Saved Spots</Copy>
         </View>
-        <Bookmark size={25} color={c.accent} strokeWidth={1.6} />
       </View>
       <VenueSearchBar query={query} setQuery={setQuery} label="Search saved venues" />
       <View style={s.resultsHeader}>
@@ -1086,16 +1178,12 @@ function VenueDetail({ route }: any): React.JSX.Element {
               <View style={{ flex: 1 }}>
                 <Copy style={s.detailTitle}>{venue.name}</Copy>
                 <Copy style={s.meta}>
-                  {venue.kind} · {distance.toFixed(1)} mi away
+                  {distance.toFixed(1)} mi away
                 </Copy>
               </View>
-              <IconButton
-                icon={Bookmark}
-                label={saved ? "Unsave venue" : "Save venue"}
-                active={saved}
-                onPress={() => void store.toggleSave(venue.id)}
-              />
+              <SavedMark saved={saved} />
             </View>
+            <SaveVenueButton venueId={venue.id} />
             <View style={s.detailCrowd}>
               <View>
                 <Copy style={s.meta}>The crowd right now</Copy>
@@ -1117,13 +1205,15 @@ function VenueDetail({ route }: any): React.JSX.Element {
                   <Users size={15} color={c.muted} />
                   <Copy style={s.small}>
                     {summary.total > 1
-                      ? `${summary.agreeing} of ${summary.total} agree`
+                      ? summary.level === null
+                        ? `${summary.agreeing} of ${summary.total} agree`
+                        : `${summary.agreeing} of ${summary.total} agree with “${levels[summary.level].name}”`
                       : summary.total === 1
                         ? "1 recent report"
                         : "No recent reports"}
                   </Copy>
                 </View>
-                <Copy style={[s.tiny, { maxWidth: 150, textAlign: "right" }]}>
+                <Copy style={s.tiny}>
                   {summary.total > 1
                     ? "Reported in the last 30 min"
                     : "A new report would help"}
@@ -1263,6 +1353,8 @@ function VenueDetail({ route }: any): React.JSX.Element {
 function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" } } }): React.JSX.Element {
   const store = useStore();
   const nav = useNavigation<any>();
+  // No page title here: once the name scrolls away, the top bar shows "Your Profile".
+  const profileScroll = useScrollTitle(store.account ? "Your Profile" : null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -1332,32 +1424,23 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
   const nextReportCount = Math.min(10, historyLimit - recentReports.length);
   return (
     <ScrollView
+      {...profileScroll.scrollProps}
       keyboardShouldPersistTaps="handled"
       style={s.screen}
       contentContainerStyle={[s.page, { maxWidth: 760 }, !store.account && s.guestProfilePage]}
     >
-      {store.account && <View style={s.pageHeading}>
-        <View style={{ flex: 1 }}>
-          <Copy style={s.title}>Your profile</Copy>
-          <Copy style={s.subtitle}>
-            A few good spots. A little local knowledge.
-          </Copy>
-        </View>
-      </View>}
       {store.account && (
         <>
-          <View style={s.profileIdentity}>
+          <View onLayout={profileScroll.onTitleLayout} style={s.profileIdentity}>
             <View style={s.profileAvatar}>
               <UserRound size={30} color={c.accent} strokeWidth={1.4} />
             </View>
-            <View style={{ flex: 1 }}>
-              <Copy style={s.profileName}>
-                {store.account.first_name || store.account.username}
-              </Copy>
-              <Copy style={s.meta}>
-                Community member
-              </Copy>
-            </View>
+            <Copy accessibilityRole="header" style={s.profileName}>
+              {store.account.first_name || store.account.username}
+            </Copy>
+            <Copy style={[s.meta, { textAlign: "center" }]}>
+              Community member
+            </Copy>
           </View>
           <View style={s.profileCounts}>
             <Pressable
@@ -1378,7 +1461,7 @@ function Profile({ route }: { route: { params?: { auth?: "signIn" | "register" }
       )}
       {!store.account && (
         <View style={s.guestAuth}>
-          <Copy accessibilityRole="header" style={s.title}>{API_URL ? "Sign in" : "Sample preview"}</Copy>
+          <Copy accessibilityRole="header" style={[s.title, { marginBottom: 12 }]}>{API_URL ? "Sign In" : "Sample Preview"}</Copy>
           {API_URL && (
             <View style={{ gap: 12 }}>
               <Copy style={s.factValue}>Username or email</Copy>
@@ -1814,6 +1897,21 @@ function LocationSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [access, recheckAccess] = useLocationAccess();
+  // Choices are a draft until "Show nearby spots" is tapped. Closing the sheet
+  // any other way leaves the current area and radius as they were.
+  const [origin, setOrigin] = useState(store.origin);
+  const [radius, setRadius] = useState(store.radius);
+  useEffect(() => {
+    if (!visible) return;
+    setOrigin(store.origin);
+    setRadius(store.radius);
+    setError("");
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  const apply = () => {
+    store.setOrigin(origin);
+    store.setRadius(radius);
+    onClose();
+  };
   return (
     <Sheet visible={visible} onClose={onClose} title="Your search area">
       <Copy style={[s.meta, { marginBottom: 20 }]}>
@@ -1821,8 +1919,9 @@ function LocationSheet({
       </Copy>
       <Pressable
         accessibilityRole="button"
+        accessibilityState={{ selected: origin === collegePark }}
         onPress={() => {
-          store.setOrigin(collegePark);
+          setOrigin(collegePark);
           setError("");
         }}
         style={s.settingsRow}
@@ -1830,7 +1929,7 @@ function LocationSheet({
         <MapPin size={20} color={c.accent} />
         <Copy style={s.factValue}>College Park, MD</Copy>
         <View style={{ flex: 1 }} />
-        {store.origin === collegePark && <Check size={18} color={c.accent} />}
+        {origin === collegePark && <Check size={18} color={c.accent} />}
       </Pressable>
       <Pressable
         accessibilityRole="button"
@@ -1848,7 +1947,7 @@ function LocationSheet({
             const location = await Location.getCurrentPositionAsync({
               accuracy: Location.Accuracy.Balanced,
             });
-            store.setOrigin({
+            setOrigin({
               latitude: location.coords.latitude,
               longitude: location.coords.longitude,
             });
@@ -1864,7 +1963,11 @@ function LocationSheet({
         <LocateFixed size={20} color={c.accent} />
         <Copy style={s.factValue}>Use my current location</Copy>
         <View style={{ flex: 1 }} />
-        {busy && <ActivityIndicator color={c.accent} />}
+        {busy ? (
+          <ActivityIndicator color={c.accent} />
+        ) : (
+          origin !== collegePark && <Check size={18} color={c.accent} />
+        )}
       </Pressable>
       {error ? (
         <Copy accessibilityRole="alert" style={s.errorText}>
@@ -1876,28 +1979,28 @@ function LocationSheet({
         Search radius
       </Copy>
       <View style={[s.waitOptions, { marginBottom: 24 }]}>
-        {[1, 2, 5, 10].map((radius) => (
+        {[1, 2, 5, 10].map((miles) => (
           <Pressable
-            key={radius}
+            key={miles}
             accessibilityRole="button"
-            accessibilityState={{ selected: store.radius === radius }}
-            onPress={() => store.setRadius(radius)}
+            accessibilityState={{ selected: radius === miles }}
+            onPress={() => setRadius(miles)}
             style={[
               s.waitOption,
               { flex: 1 },
-              store.radius === radius && {
+              radius === miles && {
                 borderColor: c.accent,
                 backgroundColor: c.accentLight,
               },
             ]}
           >
             <Copy style={[s.factValue, { textAlign: "center" }]}>
-              {radius} mi
+              {miles} mi
             </Copy>
           </Pressable>
         ))}
       </View>
-      <Button onPress={onClose}>Show nearby spots</Button>
+      <Button onPress={apply} disabled={busy}>Show nearby spots</Button>
     </Sheet>
   );
 }
@@ -1935,6 +2038,7 @@ function AppContent(): React.JSX.Element {
   };
   const [locationSheet, setLocationSheet] = useState(false);
   const [notice, setNotice] = useState("");
+  const [headerTitle, setHeaderTitle] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, setMinute] = useState(0);
   const toast = (message: string) => {
@@ -2044,7 +2148,7 @@ function AppContent(): React.JSX.Element {
     } catch (e) {
       toast((e as Error).message);
     } finally {
-      cooldowns.set(id, now + 500);
+      cooldowns.set(id, Date.now() + SAVE_COOLDOWN_MS);
     }
   };
   // Reads the phone's position once so the server can check the reporter is at
@@ -2158,6 +2262,8 @@ function AppContent(): React.JSX.Element {
     }
   };
   const store: Store = {
+    headerTitle,
+    setHeaderTitle,
     venues,
     reports,
     crowd,
@@ -2188,7 +2294,7 @@ function AppContent(): React.JSX.Element {
   };
   return (
     <Context.Provider value={store}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Brand />
       <View
         style={{ flex: 1 }}
@@ -2218,7 +2324,7 @@ function AppContent(): React.JSX.Element {
           <Stack.Navigator
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: c.white },
+              contentStyle: { backgroundColor: c.background },
               animation: reducedMotion ? "none" : "slide_from_right",
             }}
           >
@@ -2283,6 +2389,18 @@ function AppContent(): React.JSX.Element {
     </Context.Provider>
   );
 }
+// Shown while fonts load. Matches the native splash screen (app.json) so the
+// logo stays in place as the app starts. Uses system fonts: Manrope isn't ready yet.
+function LoadingScreen(): React.JSX.Element {
+  return (
+    <View style={s.loading} accessibilityLabel="Loading WhatsPoppin">
+      <StatusBar style="light" />
+      <Image source={LOGO} style={s.loadingLogo} accessible={false} />
+      <Text style={s.loadingTitle}>WhatsPoppin</Text>
+      <ActivityIndicator color={c.onPrimary} style={{ marginTop: 28 }} />
+    </View>
+  );
+}
 export default function App(): React.JSX.Element {
   const [loaded, error] = useFonts({
     Manrope_400Regular,
@@ -2291,16 +2409,15 @@ export default function App(): React.JSX.Element {
     Manrope_700Bold,
     Manrope_800ExtraBold,
   });
-  if (!loaded && !error)
-    return (
-      <View style={s.loading}>
-        <ActivityIndicator color={c.accent} />
-        <Text style={{ marginTop: 16, color: c.ink }}>WhatsPoppin</Text>
-      </View>
-    );
+  const ready = loaded || !!error;
+  // Keep the native logo splash up until fonts are ready, then hand over.
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
+  if (!ready) return <LoadingScreen />;
   return (
     <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: c.background }}>
+      <View style={{ flex: 1, backgroundColor: c.accent }}>
         <View
           testID="mobile-app"
           style={{
@@ -2308,7 +2425,7 @@ export default function App(): React.JSX.Element {
             width: "100%",
             maxWidth: Platform.OS === "web" ? MOBILE_PREVIEW_WIDTH : undefined,
             alignSelf: "center",
-            backgroundColor: c.white,
+            backgroundColor: c.background,
           }}
         >
           <AppContent />
@@ -2324,9 +2441,17 @@ const s = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: c.white,
+    backgroundColor: c.accent,
   },
-  screen: { flex: 1, backgroundColor: c.white },
+  loadingLogo: { width: 160, height: 160, borderRadius: 32 },
+  loadingTitle: {
+    marginTop: 20,
+    color: c.onPrimary,
+    fontSize: 30,
+    fontWeight: "800",
+    letterSpacing: -0.8,
+  },
+  screen: { flex: 1, backgroundColor: c.background },
   page: {
     width: "100%",
     maxWidth: 1120,
@@ -2336,9 +2461,7 @@ const s = StyleSheet.create({
     paddingBottom: 32,
   },
   brandOuter: {
-    backgroundColor: c.white,
-    borderBottomWidth: 1,
-    borderBottomColor: c.border,
+    backgroundColor: c.accent,
   },
   brandBar: {
     width: "100%",
@@ -2350,23 +2473,27 @@ const s = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  brandName: { flexDirection: "row", alignItems: "center", gap: 10 },
-  brandMark: { flexDirection: "row", alignItems: "flex-end", gap: 3 },
+  brandSide: { flex: 1, flexBasis: 0, minWidth: 0 },
+  brandLogo: { width: 38, height: 38, borderRadius: 9 },
   wordmark: {
     fontFamily: f.extra,
     fontSize: 22,
-    letterSpacing: -0.9,
+    letterSpacing: -0.6,
     lineHeight: 32,
+    color: c.onPrimary,
+    flexShrink: 1,
+    textAlign: "center",
+    paddingHorizontal: 8,
   },
-  previewTag: { flexDirection: "row", alignItems: "center", gap: 6 },
-  previewDot: { width: 6, height: 6, backgroundColor: c.busy, borderRadius: 3 },
-  previewText: { fontSize: 11, color: c.muted, fontFamily: f.medium },
+  previewTag: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: "100%" },
+  previewDot: { width: 6, height: 6, backgroundColor: c.cta, borderRadius: 3 },
+  previewText: { fontSize: 11, color: c.onPrimaryMuted, fontFamily: f.medium },
+  locationBlock: { flexShrink: 1, minWidth: 0 },
+  resultsRight: { alignItems: "flex-end", marginLeft: "auto", flexShrink: 0 },
   locationLine: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    gap: 8,
+    gap: 4,
   },
   locationButton: {
     flexDirection: "row",
@@ -2374,20 +2501,23 @@ const s = StyleSheet.create({
     gap: 7,
     minHeight: 44,
     flexShrink: 1,
+    minWidth: 0,
   },
-  locationText: { fontFamily: f.semibold, fontSize: 13 },
+  locationText: { fontFamily: f.semibold, fontSize: 13, flexShrink: 1 },
   pageHeading: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
-    marginBottom: 16,
+    paddingTop: 12,
+    marginBottom: 28,
   },
   title: {
     fontSize: 28,
     lineHeight: 36,
     fontFamily: f.extra,
     letterSpacing: -1,
+    textAlign: "center",
   },
   subtitle: { fontSize: 14, color: c.muted, marginTop: 5 },
   iconButton: {
@@ -2402,7 +2532,7 @@ const s = StyleSheet.create({
   searchBar: {
     minHeight: 50,
     borderRadius: 8,
-    backgroundColor: c.background,
+    backgroundColor: c.white,
     borderWidth: 1,
     borderColor: c.border,
     flexDirection: "row",
@@ -2411,7 +2541,15 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 16,
   },
-  searchPlaceholder: { fontSize: 14, color: c.muted, flex: 1 },
+  // Matches searchInput (size and left indent) so the look-alike bar on Nearby
+  // lines up with the real search field on Saved and Search.
+  searchPlaceholder: {
+    flex: 1,
+    fontFamily: f.regular,
+    fontSize: 15,
+    color: c.placeholder,
+    paddingHorizontal: 12,
+  },
   searchInput: {
     flex: 1,
     minWidth: 0,
@@ -2435,8 +2573,9 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: c.border,
     borderRadius: 8,
+    backgroundColor: c.white,
   },
-  filterSelected: { backgroundColor: c.ink, borderColor: c.ink },
+  filterSelected: { backgroundColor: c.accent, borderColor: c.accent },
   filterText: { fontFamily: f.semibold, fontSize: 13 },
   resultsHeader: {
     flexDirection: "row",
@@ -2446,7 +2585,6 @@ const s = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: c.border,
-    flexWrap: "wrap",
   },
   sectionTitle: {
     fontFamily: f.bold,
@@ -2465,7 +2603,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     padding: 3,
     borderRadius: 7,
-    backgroundColor: c.background,
+    backgroundColor: c.white,
     borderWidth: 1,
     borderColor: c.border,
   },
@@ -2477,7 +2615,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 9,
     borderRadius: 5,
   },
-  segmentActive: { backgroundColor: c.white },
+  segmentActive: { backgroundColor: c.accentLight },
   segmentText: { fontSize: 12, color: c.muted, fontFamily: f.semibold },
   discovery: { flexDirection: "column", alignItems: "flex-start" },
   listColumn: { flex: 1, width: "100%", minWidth: 0 },
@@ -2512,7 +2650,6 @@ const s = StyleSheet.create({
     letterSpacing: -0.35,
   },
   meta: { color: c.muted, fontSize: 13, lineHeight: 21 },
-  dot: { color: c.subtle },
   freshness: {
     flexDirection: "row",
     alignItems: "center",
@@ -2595,13 +2732,6 @@ const s = StyleSheet.create({
     minHeight: 44,
   },
   link: { color: c.accent, fontFamily: f.bold, fontSize: 13 },
-  footnote: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingTop: 20,
-  },
   tabOuter: {
     backgroundColor: c.white,
     borderTopWidth: 1,
@@ -2632,7 +2762,7 @@ const s = StyleSheet.create({
     height: 2,
     width: 26,
     borderRadius: 1,
-    backgroundColor: c.accent,
+    backgroundColor: c.cta,
     position: "absolute",
     top: 0,
   },
@@ -2690,8 +2820,23 @@ const s = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     alignItems: "flex-start",
-    paddingVertical: 24,
+    paddingTop: 24,
+    paddingBottom: 12,
   },
+  // Fixed width (fits the longer "Remove venue from saved") so both states match.
+  saveVenueButton: {
+    alignSelf: "flex-start",
+    width: 240,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 24,
+  },
+  saveVenueText: { color: c.white, fontFamily: f.bold, fontSize: 14 },
   detailTitle: {
     fontFamily: f.extra,
     fontSize: 27,
@@ -2699,16 +2844,21 @@ const s = StyleSheet.create({
     letterSpacing: -0.8,
   },
   detailCrowd: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 12,
+    gap: 14,
     paddingVertical: 20,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: c.border,
   },
-  crowdContext: { alignItems: "flex-end", gap: 10, paddingTop: 3 },
-  contextLine: { flexDirection: "row", gap: 7, alignItems: "center" },
+  // Under the crowd label, wrapping onto more lines on narrow screens.
+  crowdContext: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    columnGap: 16,
+    rowGap: 6,
+  },
+  contextLine: { flexDirection: "row", gap: 7, alignItems: "center", flexShrink: 1 },
   detailFacts: {
     flexDirection: "row",
     paddingVertical: 24,
@@ -2743,7 +2893,7 @@ const s = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: c.background,
+    backgroundColor: c.accentLight,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -2751,7 +2901,7 @@ const s = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginTop: 20,
-    backgroundColor: c.background,
+    backgroundColor: c.accentLight,
     padding: 16,
     borderRadius: 8,
   },
@@ -2770,7 +2920,7 @@ const s = StyleSheet.create({
   button: {
     minHeight: 50,
     borderRadius: 8,
-    backgroundColor: c.accent,
+    backgroundColor: c.cta,
     paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
@@ -2789,7 +2939,7 @@ const s = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
     alignSelf: "center",
-    paddingTop: 32,
+    paddingTop: 40,
     gap: 16,
   },
   guestFooter: {
@@ -2815,10 +2965,10 @@ const s = StyleSheet.create({
   },
   passwordToggleText: { fontFamily: f.semibold, fontSize: 14, color: c.accent },
   profileIdentity: {
-    flexDirection: "row",
     alignItems: "center",
-    gap: 16,
-    marginVertical: 8,
+    gap: 4,
+    paddingTop: 16,
+    marginBottom: 8,
   },
   profileAvatar: {
     width: 64,
@@ -2833,6 +2983,8 @@ const s = StyleSheet.create({
     fontFamily: f.bold,
     lineHeight: 30,
     letterSpacing: -0.4,
+    textAlign: "center",
+    marginTop: 8,
   },
   profileCounts: {
     flexDirection: "row",
@@ -2864,6 +3016,7 @@ const s = StyleSheet.create({
     fontFamily: f.regular,
     fontSize: 16,
     color: c.ink,
+    backgroundColor: c.white,
   },
   modalRoot: { flex: 1, justifyContent: "flex-end", alignItems: "center" },
   scrim: { ...StyleSheet.absoluteFill, backgroundColor: c.scrim },

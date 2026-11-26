@@ -187,7 +187,7 @@ export default function Registration({ complete, back }: { complete: (username: 
         editable={!busy}
         autoCapitalize="none"
         autoCorrect={false}
-        placeholderTextColor={c.muted}
+        placeholderTextColor={c.placeholder}
         onFocus={() => setFocused(key)}
         onBlur={() => setFocused(null)}
         style={[styles.field, errors[key]?.length ? styles.invalid : undefined, focused === key && styles.focused]}
@@ -390,22 +390,22 @@ export default function Registration({ complete, back }: { complete: (username: 
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: c.white },
+  screen: { flex: 1, backgroundColor: c.background },
   page: { width: "100%", maxWidth: 560, alignSelf: "center", paddingTop: 16 },
   back: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44, alignSelf: "flex-start", marginBottom: 16 },
   backText: { fontFamily: f.semibold, fontSize: 14, color: c.ink },
   stepLabel: { fontFamily: f.semibold, fontSize: 12, color: c.muted, marginBottom: 8 },
   progress: { flexDirection: "row", gap: 6, marginBottom: 24 },
   progressPart: { flex: 1, height: 4, borderRadius: 2, backgroundColor: c.border },
-  progressDone: { backgroundColor: c.accent },
+  progressDone: { backgroundColor: c.highlight },
   heading: { gap: 8, marginBottom: 24 },
   title: { fontFamily: f.extra, fontSize: 26, lineHeight: 34, letterSpacing: -1, color: c.ink },
   subtitle: { fontFamily: f.regular, fontSize: 14, lineHeight: 22, color: c.muted },
   form: { gap: 20 },
   fieldGroup: { gap: 8 },
   label: { fontFamily: f.semibold, fontSize: 14, color: c.ink },
-  field: { borderWidth: 1, borderColor: c.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, fontFamily: f.regular, fontSize: 16, color: c.ink },
-  focused: { borderColor: c.focus, boxShadow: "0 0 0 2px #EDF5EF" },
+  field: { borderWidth: 1, borderColor: c.muted, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48, fontFamily: f.regular, fontSize: 16, color: c.ink, backgroundColor: c.white },
+  focused: { borderColor: c.focus, boxShadow: `0 0 0 2px ${c.highlightLight}` },
   invalid: { borderColor: c.packed },
   hint: { fontFamily: f.regular, fontSize: 12, lineHeight: 19, color: c.muted },
   error: { fontFamily: f.medium, fontSize: 13, lineHeight: 20, color: c.packed },
@@ -415,7 +415,7 @@ const styles = StyleSheet.create({
   resendRow: { flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" },
   secondary: { flexDirection: "row", gap: 8, alignItems: "center", minHeight: 44, alignSelf: "flex-start" },
   secondaryText: { fontFamily: f.semibold, fontSize: 14, color: c.accent },
-  button: { minHeight: 50, borderRadius: 8, backgroundColor: c.accent, paddingHorizontal: 20, paddingVertical: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  button: { minHeight: 50, borderRadius: 8, backgroundColor: c.cta, paddingHorizontal: 20, paddingVertical: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   buttonText: { fontFamily: f.bold, fontSize: 14, color: c.white },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.8 },

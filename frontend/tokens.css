@@ -1,13 +1,13 @@
-/* Hallmark · macrostructure: mobile discovery list · tone: neutral · anchor hue: forest */
+/* WhatsPoppin brand tokens for the web build. Keep in sync with src/theme.ts. */
 :root {
-  --color-ink: #202925;
-  --color-muted: #66716c;
-  --color-accent: #24634b;
+  --color-ink: #1e1a28;
+  --color-muted: #6b6275;
+  --color-accent: #620452;
   --color-paper: #ffffff;
-  --color-background: #f7f9f7;
-  --color-border: #e2e7e3;
-  --color-focus: #24634b;
-  --color-shadow: #20292520;
+  --color-background: #f8f2f1;
+  --color-border: #e8dcdf;
+  --color-focus: #b414f5;
+  --color-shadow: #1e1a2820;
   --font-body: Manrope_400Regular, system-ui, sans-serif;
   --space-1: 4px;
   --space-2: 8px;

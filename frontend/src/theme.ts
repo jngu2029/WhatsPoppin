@@ -1,16 +1,36 @@
-// Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
-// Mobile discovery list · modern-minimal · custom neutral + forest accent
+// WhatsPoppin brand palette.
+export const brand = {
+  primary: "#620452", // deep plum
+  secondary: "#E2135D", // hot pink
+  accent: "#B414F5", // electric purple
+  background: "#F8F2F1",
+  text: "#1E1A28",
+};
+
+// 60-30-10 rule:
+//   60% dominant  - brand.background on every screen, white cards, brand.text.
+//   30% secondary - brand.primary: header bar, icons, links, outlines, selected states.
+//   10% accent    - brand.secondary for the main buttons, active tab, and saved spots;
+//                   brand.accent for focus rings and sign-up progress.
+// The crowd-level colors below are status colors, not brand colors, so they stay
+// green → red to keep Quiet/Busy/Packed easy to read.
 export const colors = {
-  ink: "#202925",
-  muted: "#66716C",
-  subtle: "#8A948E",
-  accent: "#24634B",
-  accentLight: "#EDF5EF",
-  savedFill: "#FACC15",
+  ink: brand.text,
+  muted: "#6B6275", // secondary text: 5.2:1 on background, 5.8:1 on white
+  subtle: "#8E8496",
+  placeholder: "#958C9E", // lighter than muted so hints read as hints: 3.2:1 on white
+  accent: brand.primary,
+  accentLight: "#F4E6F1", // plum tint for selected rows, notices, photo placeholders
+  cta: brand.secondary, // filled buttons: white text is 4.7:1
+  highlight: brand.accent,
+  highlightLight: "#F1DDFD",
+  savedFill: brand.secondary,
+  onPrimary: "#FFFFFF",
+  onPrimaryMuted: "#E9CFE3", // secondary text on the plum header: 8.7:1
   white: "#FFFFFF",
-  background: "#F7F9F7",
-  border: "#E2E7E3",
-  pressed: "#F0F3F0",
+  background: brand.background,
+  border: "#E8DCDF",
+  pressed: "#F1E5EA",
   quiet: "#24634B",
   quietBg: "#EDF5EF",
   moderate: "#657229",
@@ -19,9 +39,9 @@ export const colors = {
   busyBg: "#FBF2DF",
   packed: "#A34738",
   packedBg: "#F9EDE9",
-  scrim: "rgba(20,32,25,0.45)",
-  photoScrim: "rgba(20,32,25,0.60)",
-  focus: "#24634B",
+  scrim: "rgba(30,26,40,0.45)",
+  photoScrim: "rgba(30,26,40,0.60)",
+  focus: brand.accent,
   mapLand: "#F0F1EA",
   mapPark: "#DCE8D8",
   mapRoad: "#FFFFFF",
